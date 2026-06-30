@@ -193,148 +193,244 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                 <div class="section-title">
                     <div>
                         <h2 id="visibility-monitor-title">AI láthatóságmérés</h2>
-                        <p>Ismételhető mérés témákra és versenytársakra. A rendszer több vevői kérdésvariánst futtat keresési providereken, majd megmutatja, milyen arányban látszik a saját domain és kik uralják a találati teret.</p>
+                        <p>Vezetett mérési folyamat: először rögzíted, mit mérünk, utána opcionálisan hozzáadsz valós forgalmi vagy Google bizonyítékot, végül futtatod a láthatósági mérést és letöltöd az ügyfélkész riportot.</p>
                     </div>
                     <span class="status-pill" id="visibilityStatus">Mérési profil készen</span>
                 </div>
 
-                <div class="visibility-monitor-layout">
-                    <form class="visibility-project-form" id="visibilityProjectForm" autocomplete="off">
-                        <input type="hidden" id="visibilityProjectId" name="id" value="">
-                        <label for="visibilityName">Projekt neve</label>
-                        <input id="visibilityName" name="name" type="text" placeholder="Pl. Hello Agency visibility">
-
-                        <label for="visibilityUrl">Saját domain vagy URL</label>
-                        <input id="visibilityUrl" name="site_url" type="text" inputmode="url" placeholder="www.pelda.hu" required>
-
-                        <div class="visibility-inline-fields">
-                            <div>
-                                <label for="visibilityMarket">Piac</label>
-                                <input id="visibilityMarket" name="market" type="text" value="Magyarország">
-                            </div>
-                            <div>
-                                <label for="visibilityLanguage">Nyelv</label>
-                                <input id="visibilityLanguage" name="language" type="text" value="hu">
-                            </div>
-                        </div>
-
-                        <div class="visibility-inline-fields model-fields">
-                            <div>
-                                <label for="visibilityBusinessModel">Üzleti modell</label>
-                                <select id="visibilityBusinessModel" name="business_model">
-                                    <option value="b2b_service">B2B szolgáltatás</option>
-                                    <option value="local_service">Helyi szolgáltatás</option>
-                                    <option value="ecommerce">E-commerce</option>
-                                    <option value="saas">SaaS / szoftver</option>
-                                    <option value="expert_brand">Szakértői brand</option>
-                                    <option value="generic">Általános weboldal</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label for="visibilityQueryLimit">Kérdésszám</label>
-                                <input id="visibilityQueryLimit" name="query_limit" type="number" min="4" max="20" value="12">
-                            </div>
-                        </div>
-
-                        <label for="visibilityTopics">Témák, vevői kérdéskörök</label>
-                        <textarea id="visibilityTopics" name="topics" rows="5" placeholder="AI keresési optimalizálás&#10;weboldal audit&#10;B2B leadgenerálás" required></textarea>
-
-                        <label for="visibilityCustomQueries">Saját mérési kérdések</label>
-                        <textarea id="visibilityCustomQueries" name="custom_queries" rows="4" placeholder="Melyik ügynökség segít AI keresési láthatóságot javítani?&#10;Milyen AIO audit eszközt érdemes használni?"></textarea>
-
-                        <label for="visibilityQueryPortfolio">Heti Top 20 query portfólió</label>
-                        <textarea id="visibilityQueryPortfolio" name="query_portfolio" rows="6" placeholder="buyer: Melyik AI audit eszközt érdemes használni B2B weboldalhoz?&#10;comparison: Hello AI Audit alternatívák&#10;pricing: Mennyibe kerül egy AIO audit?"></textarea>
-
-                        <label for="visibilityCompetitors">Versenytárs domainek</label>
-                        <textarea id="visibilityCompetitors" name="competitors" rows="4" placeholder="pelda-versenytars.hu&#10;masikceg.hu"></textarea>
-
-                        <div class="visibility-actions">
-                            <button type="submit" class="mini-button" id="saveVisibilityProjectButton">Projekt mentése</button>
-                            <button type="button" class="mini-button secondary" id="previewVisibilityQueriesButton">Kérdések előnézete</button>
-                            <button type="button" class="mini-button secondary" id="previewPortfolioButton">Top 20 előnézet</button>
-                            <button type="button" class="mini-button secondary" id="runVisibilityButton" disabled>Mérés futtatása</button>
-                            <button type="button" class="mini-button secondary" id="runWeeklyPortfolioButton" disabled>Heti Top 20 futtatása</button>
-                            <button type="button" class="mini-button secondary" id="exportVisibilityPdfButton" disabled>Visibility PDF</button>
-                        </div>
-                        <div class="visibility-query-preview hidden" id="visibilityQueryPreview"></div>
-                        <div class="visibility-progress hidden" id="visibilityProgressWrap" aria-live="polite">
-                            <div class="progress-track"><span id="visibilityProgressBar"></span></div>
-                            <span id="visibilityProgressText">Visibility mérés előkészítése...</span>
-                        </div>
-                        <p class="form-help">A heti Top 20 portfólió rögzített kérdéssor: akkor használd, ha ugyanazokat a kérdéseket akarod hétről hétre újramérni. Kategória formátum: buyer:, comparison:, competitor:, pricing:, local:, expert:.</p>
-                    </form>
-
-                    <article class="ga4-import-panel" id="ga4ImportPanel">
-                        <div class="recommendation-head">
-                            <div>
-                                <span>GA4 AI referral import</span>
-                                <h3>Valódi AI referral forgalom</h3>
-                                <p>Exportálj GA4-ből source / medium vagy referrer alapú CSV-t, majd töltsd fel vagy másold be. A rendszer felismeri a ChatGPT, Perplexity, Gemini, Copilot, Claude és hasonló AI forrásokat.</p>
-                            </div>
-                            <button class="mini-button secondary" type="button" id="importGa4Button" disabled>GA4 import</button>
-                        </div>
-                        <div class="ga4-import-grid">
-                            <label for="ga4CsvFile">CSV fájl</label>
-                            <input id="ga4CsvFile" type="file" accept=".csv,text/csv,text/plain">
-                            <label for="ga4CsvText">Vagy CSV tartalom</label>
-                            <textarea id="ga4CsvText" rows="5" placeholder="Session source / medium,Sessions,Total users,Key events&#10;chatgpt.com / referral,12,9,2&#10;perplexity.ai / referral,4,3,0"></textarea>
-                        </div>
-                        <div class="ga4-import-result" id="ga4ImportResult">
-                            <p class="empty-state">Ments vagy nyiss meg egy visibility projektet, majd importáld a GA4 exportot.</p>
-                        </div>
+                <div class="visibility-flow-steps" aria-label="AI láthatóságmérés lépései">
+                    <article class="flow-step active" data-visibility-step="profile">
+                        <span>1</span>
+                        <strong>Mérési profil</strong>
+                        <p>Domain, piac, témák és versenytársak. Ezt mentjük, hogy legyen előzmény, PDF és ismételhető mérés.</p>
                     </article>
-
-                    <article class="serp-import-panel" id="serpAioImportPanel">
-                        <div class="recommendation-head">
-                            <div>
-                                <span>Google SERP / AIO import</span>
-                                <h3>AI Overview és SERP bizonyíték</h3>
-                                <p>SerpApi, DataForSEO vagy kézi SERP export JSON/CSV. A rendszer kinyeri, volt-e AI Overview, idézte-e a saját domaint, és milyen versenytárs források szerepeltek.</p>
-                            </div>
-                            <div class="serp-action-group">
-                                <button class="mini-button secondary" type="button" id="runGeminiGroundedButton" disabled>Gemini grounded próba</button>
-                                <button class="mini-button secondary" type="button" id="runSerpApiButton" disabled>SerpApi live próba</button>
-                                <button class="mini-button secondary" type="button" id="importSerpAioButton" disabled>SERP/AIO import</button>
-                            </div>
-                        </div>
-                        <div class="ga4-import-grid">
-                            <label for="serpAioFile">JSON vagy CSV fájl</label>
-                            <input id="serpAioFile" type="file" accept=".json,.csv,application/json,text/csv,text/plain">
-                            <label for="serpAioText">Vagy export tartalom</label>
-                            <textarea id="serpAioText" rows="5" placeholder='{"search_parameters":{"q":"legjobb AI audit eszköz"},"ai_overview":{"sources":[{"link":"https://pelda.hu"}]},"organic_results":[{"link":"https://versenytars.hu"}]}'></textarea>
-                        </div>
-                        <div class="ga4-import-result" id="serpAioImportResult">
-                            <p class="empty-state">Ments vagy nyiss meg egy visibility projektet, majd importáld a SERP/AIO exportot.</p>
-                        </div>
+                    <article class="flow-step" data-visibility-step="questions">
+                        <span>2</span>
+                        <strong>Kérdéscsomag</strong>
+                        <p>Megnézheted, milyen vevői kérdések alapján futna a mérés. A Top 20 csak heti monitoringhoz kell.</p>
                     </article>
-
-                    <div class="visibility-dashboard" id="visibilityDashboard">
-                        <article class="visibility-empty-state">
-                            <h3>Először ments egy mérési profilt</h3>
-                            <p>Add meg a saját domaint, 3-8 fontos témát és ismert versenytársakat. Utána egy gombbal futtatható a visibility mérés.</p>
-                        </article>
-                    </div>
+                    <article class="flow-step" data-visibility-step="evidence">
+                        <span>3</span>
+                        <strong>Bizonyítékforrások</strong>
+                        <p>GA4 és SERP/AIO import opcionális kontrollréteg. Segít eldönteni, hogy a mérés már valós forgalomban is látszik-e.</p>
+                    </article>
+                    <article class="flow-step" data-visibility-step="report">
+                        <span>4</span>
+                        <strong>Mérés és riport</strong>
+                        <p>A fő funkció: futtatás, visibility rate, versenytárs benchmark, backlog és PDF export.</p>
+                    </article>
                 </div>
 
-                <div class="visibility-project-list" id="visibilityProjectList">
-                    <?php if (!$visibilityProjects): ?>
-                        <p class="empty-state">Még nincs mentett AI láthatósági projekt.</p>
-                    <?php endif; ?>
-                    <?php foreach ($visibilityProjects as $project): ?>
-                        <?php $latestRun = $project['latest_run'] ?? null; ?>
-                        <article class="visibility-project-card" data-project='<?= e(json_encode($project, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)) ?>'>
+                <div class="visibility-monitor-layout">
+                    <div class="visibility-left-stack">
+                        <form class="visibility-project-form" id="visibilityProjectForm" autocomplete="off">
+                            <input type="hidden" id="visibilityProjectId" name="id" value="">
+
+                            <div class="form-section form-section-highlight">
+                                <div class="form-section-head">
+                                    <span>1. lépés</span>
+                                    <h3>Mérési profil összeállítása</h3>
+                                    <p>A profil azért kell, mert ehhez kapcsolódnak a későbbi futások, a GA4/SERP bizonyítékok és a PDF riport. Ha ugyanazt a profilt újraméred, trendet is kapsz.</p>
+                                </div>
+
+                                <label for="visibilityName">Projekt neve</label>
+                                <input id="visibilityName" name="name" type="text" placeholder="Pl. Saját márka AI láthatóság">
+
+                                <label for="visibilityUrl">Saját domain vagy URL</label>
+                                <input id="visibilityUrl" name="site_url" type="text" inputmode="url" placeholder="www.pelda.hu" required>
+
+                                <div class="visibility-inline-fields">
+                                    <div>
+                                        <label for="visibilityMarket">Piac</label>
+                                        <input id="visibilityMarket" name="market" type="text" value="Magyarország">
+                                    </div>
+                                    <div>
+                                        <label for="visibilityLanguage">Nyelv</label>
+                                        <input id="visibilityLanguage" name="language" type="text" value="hu">
+                                    </div>
+                                </div>
+
+                                <div class="visibility-inline-fields model-fields">
+                                    <div>
+                                        <label for="visibilityBusinessModel">Üzleti modell</label>
+                                        <select id="visibilityBusinessModel" name="business_model">
+                                            <option value="b2b_service">B2B szolgáltatás</option>
+                                            <option value="local_service">Helyi szolgáltatás</option>
+                                            <option value="ecommerce">E-commerce</option>
+                                            <option value="saas">SaaS / szoftver</option>
+                                            <option value="expert_brand">Szakértői brand</option>
+                                            <option value="generic">Általános weboldal</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="visibilityQueryLimit">Kérdésszám</label>
+                                        <input id="visibilityQueryLimit" name="query_limit" type="number" min="4" max="20" value="12">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="form-section-head">
+                                    <span>2. lépés</span>
+                                    <h3>Témák és kérdéscsomag</h3>
+                                    <p>A témákból a rendszer buyer, comparison, expert és local jellegű kérdéseket generál. Saját kérdést akkor adj meg, ha konkrét promptot is mérni akarsz.</p>
+                                </div>
+
+                                <label for="visibilityTopics">Témák, vevői kérdéskörök</label>
+                                <textarea id="visibilityTopics" name="topics" rows="5" placeholder="AI keresési optimalizálás&#10;weboldal audit&#10;B2B leadgenerálás" required></textarea>
+
+                                <label for="visibilityCustomQueries">Saját mérési kérdések</label>
+                                <textarea id="visibilityCustomQueries" name="custom_queries" rows="4" placeholder="Melyik ügynökség segít AI keresési láthatóságot javítani?&#10;Milyen AIO audit eszközt érdemes használni?"></textarea>
+
+                                <label for="visibilityQueryPortfolio">Heti Top 20 query portfólió <small>opcionális</small></label>
+                                <textarea id="visibilityQueryPortfolio" name="query_portfolio" rows="6" placeholder="buyer: Melyik AI audit eszközt érdemes használni B2B weboldalhoz?&#10;comparison: Hello AI Audit alternatívák&#10;pricing: Mennyibe kerül egy AIO audit?"></textarea>
+                                <p class="form-help">A Top 20 akkor hasznos, ha hétről hétre ugyanazokat a kérdéseket akarod újramérni. Ha csak egyszeri audit kell, hagyhatod üresen.</p>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="form-section-head">
+                                    <span>3. lépés</span>
+                                    <h3>Versenytársak</h3>
+                                    <p>Nem kötelező, de sokkal hasznosabb lesz a riport, ha megadod azokat a domaineket, akikkel a válaszokban együtt versenyeztek.</p>
+                                </div>
+
+                                <label for="visibilityCompetitors">Versenytárs domainek</label>
+                                <textarea id="visibilityCompetitors" name="competitors" rows="4" placeholder="pelda-versenytars.hu&#10;masikceg.hu"></textarea>
+                            </div>
+
+                            <div class="visibility-actions">
+                                <div class="visibility-action-stage primary-stage">
+                                    <div class="action-copy">
+                                        <span>Kezdés</span>
+                                        <strong>Profil mentése</strong>
+                                        <small>Ez aktiválja a mérést, az importokat és a későbbi visszatöltést.</small>
+                                    </div>
+                                    <button type="submit" class="mini-button" id="saveVisibilityProjectButton">Profil mentése</button>
+                                </div>
+
+                                <div class="visibility-action-stage">
+                                    <div class="action-copy">
+                                        <span>Ellenőrzés</span>
+                                        <strong>Kérdések előnézete</strong>
+                                        <small>Nem futtat mérést, csak megmutatja, milyen promptokkal dolgozna a rendszer.</small>
+                                    </div>
+                                    <div class="button-stack">
+                                        <button type="button" class="mini-button secondary" id="previewVisibilityQueriesButton">Generált kérdések</button>
+                                        <button type="button" class="mini-button secondary" id="previewPortfolioButton">Top 20 előnézet</button>
+                                    </div>
+                                </div>
+
+                                <div class="visibility-action-stage run-stage">
+                                    <div class="action-copy">
+                                        <span>Fő funkció</span>
+                                        <strong>Mérés futtatása</strong>
+                                        <small>A saját domaint, a versenytársakat és a citációs mezőt vizsgálja.</small>
+                                    </div>
+                                    <div class="button-stack">
+                                        <button type="button" class="mini-button" id="runVisibilityButton" disabled>Mérés futtatása</button>
+                                        <button type="button" class="mini-button secondary" id="runWeeklyPortfolioButton" disabled>Heti Top 20 futtatása</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="visibility-query-preview hidden" id="visibilityQueryPreview"></div>
+                            <div class="visibility-progress hidden" id="visibilityProgressWrap" aria-live="polite">
+                                <div class="progress-track"><span id="visibilityProgressBar"></span></div>
+                                <span id="visibilityProgressText">Visibility mérés előkészítése...</span>
+                            </div>
+                        </form>
+
+                        <div class="visibility-project-list" id="visibilityProjectList">
+                            <div class="list-head">
+                                <span>Mentett profilok</span>
+                                <p>Innen nyithatod vissza a korábbi méréseket és a hozzájuk kapcsolt importokat.</p>
+                            </div>
+                            <?php if (!$visibilityProjects): ?>
+                                <p class="empty-state">Még nincs mentett AI láthatósági projekt.</p>
+                            <?php endif; ?>
+                            <?php foreach ($visibilityProjects as $project): ?>
+                                <?php $latestRun = $project['latest_run'] ?? null; ?>
+                                <article class="visibility-project-card" data-project='<?= e(json_encode($project, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)) ?>'>
+                                    <div>
+                                        <strong><?= e((string) ($project['name'] ?? $project['target_domain'])) ?></strong>
+                                        <small><?= e((string) ($project['target_domain'] ?? '')) ?> · <?= e((string) ($project['business_model_label'] ?? 'Általános weboldal')) ?> · <?= e((string) count($project['topics'] ?? [])) ?> téma · <?= e((string) count($project['query_portfolio'] ?? [])) ?> Top 20 kérdés</small>
+                                    </div>
+                                    <div class="history-actions">
+                                        <?php if ($latestRun): ?>
+                                            <span><?= e((string) ($latestRun['visibility_rate'] ?? 0)) ?>%</span>
+                                        <?php endif; ?>
+                                        <button class="mini-button secondary visibility-load-project" type="button">Megnyitás</button>
+                                    </div>
+                                </article>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="visibility-right-stack">
+                        <article class="visibility-next-step-panel">
                             <div>
-                                <strong><?= e((string) ($project['name'] ?? $project['target_domain'])) ?></strong>
-                                <small><?= e((string) ($project['target_domain'] ?? '')) ?> · <?= e((string) ($project['business_model_label'] ?? 'Általános weboldal')) ?> · <?= e((string) count($project['topics'] ?? [])) ?> téma · <?= e((string) count($project['query_portfolio'] ?? [])) ?> Top 20 kérdés</small>
+                                <span>Aktuális fókusz</span>
+                                <h3 id="visibilityNextStepTitle">Ments egy mérési profilt</h3>
+                                <p id="visibilityNextStepText">A mérés csak mentett profilhoz indul, mert az előzményeket, importokat és riportokat ehhez kell kötni.</p>
                             </div>
-                            <div class="history-actions">
-                                <?php if ($latestRun): ?>
-                                    <span><?= e((string) ($latestRun['visibility_rate'] ?? 0)) ?>%</span>
-                                <?php endif; ?>
-                                <button class="mini-button secondary visibility-load-project" type="button">Megnyitás</button>
-                            </div>
+                            <button type="button" class="mini-button secondary" id="exportVisibilityPdfButton" disabled>PDF riport letöltése</button>
                         </article>
-                    <?php endforeach; ?>
+
+                        <section class="visibility-evidence-section" aria-labelledby="visibilityEvidenceTitle">
+                            <div class="evidence-section-head">
+                                <span>Opcionális 3. lépés</span>
+                                <h3 id="visibilityEvidenceTitle">Bizonyítékforrások hozzáadása</h3>
+                                <p>Ezek nem kötelezők a visibility méréshez. Akkor használd őket, ha a modellezett mérés mellé valós forgalmi adatot vagy Google/AI Overview bizonyítékot is szeretnél.</p>
+                            </div>
+
+                            <details class="evidence-drawer" id="ga4ImportPanel">
+                                <summary>
+                                    <span>GA4 AI referral import</span>
+                                    <strong>Mutatja, hogy jön-e már látogató AI eszközökből</strong>
+                                    <small>GA4 CSV export: source/medium, referrer vagy landing page dimenzióval.</small>
+                                </summary>
+                                <div class="ga4-import-grid">
+                                    <label for="ga4CsvFile">CSV fájl</label>
+                                    <input id="ga4CsvFile" type="file" accept=".csv,text/csv,text/plain">
+                                    <label for="ga4CsvText">Vagy CSV tartalom</label>
+                                    <textarea id="ga4CsvText" rows="5" placeholder="Session source / medium,Sessions,Total users,Key events&#10;chatgpt.com / referral,12,9,2&#10;perplexity.ai / referral,4,3,0"></textarea>
+                                    <button class="mini-button secondary" type="button" id="importGa4Button" disabled>GA4 import mentése</button>
+                                </div>
+                                <div class="ga4-import-result" id="ga4ImportResult">
+                                    <p class="empty-state">Ments vagy nyiss meg egy visibility projektet, majd importáld a GA4 exportot.</p>
+                                </div>
+                            </details>
+
+                            <details class="evidence-drawer" id="serpAioImportPanel">
+                                <summary>
+                                    <span>Google SERP / AIO bizonyíték</span>
+                                    <strong>Mutatja, szerepel-e a domain Google találatokban vagy AI Overview forrásként</strong>
+                                    <small>SerpApi live próba, Gemini grounded próba, DataForSEO vagy kézi JSON/CSV import.</small>
+                                </summary>
+                                <div class="serp-action-group">
+                                    <button class="mini-button secondary" type="button" id="runGeminiGroundedButton" disabled>Gemini grounded próba</button>
+                                    <button class="mini-button secondary" type="button" id="runSerpApiButton" disabled>SerpApi live próba</button>
+                                    <button class="mini-button secondary" type="button" id="importSerpAioButton" disabled>SERP/AIO import mentése</button>
+                                </div>
+                                <div class="ga4-import-grid">
+                                    <label for="serpAioFile">JSON vagy CSV fájl</label>
+                                    <input id="serpAioFile" type="file" accept=".json,.csv,application/json,text/csv,text/plain">
+                                    <label for="serpAioText">Vagy export tartalom</label>
+                                    <textarea id="serpAioText" rows="5" placeholder='{"search_parameters":{"q":"legjobb AI audit eszköz"},"ai_overview":{"sources":[{"link":"https://pelda.hu"}]},"organic_results":[{"link":"https://versenytars.hu"}]}'></textarea>
+                                </div>
+                                <div class="ga4-import-result" id="serpAioImportResult">
+                                    <p class="empty-state">Ments vagy nyiss meg egy visibility projektet, majd importáld a SERP/AIO exportot.</p>
+                                </div>
+                            </details>
+                        </section>
+
+                        <div class="visibility-dashboard" id="visibilityDashboard">
+                            <article class="visibility-empty-state">
+                                <h3>Először ments egy mérési profilt</h3>
+                                <p>Add meg a saját domaint, 3-8 fontos témát és ismert versenytársakat. Utána egy gombbal futtatható a visibility mérés.</p>
+                            </article>
+                        </div>
+                    </div>
                 </div>
             </section>
 

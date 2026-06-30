@@ -58,6 +58,8 @@ const runGeminiGroundedButton = document.querySelector('#runGeminiGroundedButton
 const serpAioFile = document.querySelector('#serpAioFile');
 const serpAioText = document.querySelector('#serpAioText');
 const serpAioImportResult = document.querySelector('#serpAioImportResult');
+const visibilityNextStepTitle = document.querySelector('#visibilityNextStepTitle');
+const visibilityNextStepText = document.querySelector('#visibilityNextStepText');
 
 const metricLabels = {
     technical: 'Elérhetőség',
@@ -109,6 +111,7 @@ window.addEventListener('hashchange', () => {
 });
 
 switchAppView(viewFromHash(window.location.hash), false);
+updateVisibilityJourneyState();
 
 form?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -448,6 +451,7 @@ async function fetchVisibilityProjectDetails(projectId) {
         renderVisibilityDashboard(currentVisibilityRuns[0] || null, currentVisibilityProject, false, currentVisibilityRuns);
         renderGa4ImportResult(currentVisibilityGa4Imports);
         renderSerpAioImportResult(currentVisibilitySerpAioImports);
+        updateVisibilityJourneyState();
         upsertVisibilityProjectCard(currentVisibilityProject);
         if (exportVisibilityPdfButton) exportVisibilityPdfButton.disabled = !currentVisibilityRuns.length;
         if (importGa4Button) importGa4Button.disabled = !currentVisibilityProject?.id;
@@ -551,6 +555,57 @@ function setVisibilityStatus(message, type = 'neutral') {
     visibilityStatus.style.color = type === 'error' ? '#b73333' : '';
 }
 
+function updateVisibilityJourneyState() {
+    const hasProject = Boolean(currentVisibilityProject?.id);
+    const hasRun = Boolean(currentVisibilityRuns.length || currentVisibilityProject?.latest_run);
+    const hasEvidence = Boolean(
+        currentVisibilityGa4Imports.length
+        || currentVisibilitySerpAioImports.length
+        || currentVisibilityGeminiGroundingRuns.length
+        || currentVisibilityProject?.latest_ga4_import
+        || currentVisibilityProject?.latest_serp_aio_import
+        || currentVisibilityProject?.latest_gemini_grounding_run
+    );
+
+    const stepState = {
+        profile: hasProject ? 'done' : 'active',
+        questions: hasProject && !hasRun ? 'active' : (hasProject ? 'done' : ''),
+        evidence: hasEvidence ? 'done' : (hasProject && !hasRun ? 'active' : ''),
+        report: hasRun ? 'active done' : '',
+    };
+
+    document.querySelectorAll('[data-visibility-step]').forEach((step) => {
+        const state = stepState[step.dataset.visibilityStep] || '';
+        step.classList.toggle('active', state.includes('active'));
+        step.classList.toggle('done', state.includes('done'));
+    });
+
+    if (!visibilityNextStepTitle || !visibilityNextStepText) {
+        return;
+    }
+
+    if (!hasProject) {
+        visibilityNextStepTitle.textContent = 'Ments egy mérési profilt';
+        visibilityNextStepText.textContent = 'A profil köti össze a domaint, kérdéseket, versenytársakat, importokat, futásokat és PDF riportokat. Ezért ez az első kötelező lépés.';
+        return;
+    }
+
+    if (!hasRun) {
+        visibilityNextStepTitle.textContent = 'Profil mentve: indulhat a mérés';
+        visibilityNextStepText.textContent = 'Ha szeretnéd, előbb nézd meg a generált kérdéseket. Ha rendben van, a “Mérés futtatása” gomb adja a fő AI visibility eredményt.';
+        return;
+    }
+
+    if (!hasEvidence) {
+        visibilityNextStepTitle.textContent = 'Mérés kész: jöhet PDF vagy kontrolladat';
+        visibilityNextStepText.textContent = 'A visibility riport már letölthető. GA4 vagy SERP/AIO importot akkor adj hozzá, ha valós forgalmi vagy Google találati bizonyítékkal is alá akarod támasztani.';
+        return;
+    }
+
+    visibilityNextStepTitle.textContent = 'Teljesebb mérési csomag összeállt';
+    visibilityNextStepText.textContent = 'Van mérési futás és legalább egy kontrolladat. A PDF riport már a mérés, bizonyítékok és javítási backlog alapján készül.';
+}
+
 async function saveVisibilityProject() {
     if (!visibilityProjectForm) {
         return;
@@ -583,6 +638,7 @@ async function saveVisibilityProject() {
 
         loadVisibilityProject(payload.project);
         upsertVisibilityProjectCard(payload.project);
+        updateVisibilityJourneyState();
         setVisibilityStatus('Projekt mentve, mérés indítható', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -712,6 +768,7 @@ function loadVisibilityProject(project) {
     renderVisibilityDashboard(project.latest_run || null, project, false, currentVisibilityRuns);
     renderGa4ImportResult(currentVisibilityGa4Imports);
     renderSerpAioImportResult(currentVisibilitySerpAioImports);
+    updateVisibilityJourneyState();
 }
 
 async function importGa4Referrals() {
@@ -752,6 +809,7 @@ async function importGa4Referrals() {
         renderGa4ImportResult(currentVisibilityGa4Imports);
         renderVisibilityDashboard(currentVisibilityRuns[0] || null, currentVisibilityProject, false, currentVisibilityRuns);
         upsertVisibilityProjectCard(currentVisibilityProject);
+        updateVisibilityJourneyState();
         setVisibilityStatus('GA4 AI referral import mentve', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -815,6 +873,7 @@ async function importSerpAioEvidence() {
         renderSerpAioImportResult(currentVisibilitySerpAioImports);
         renderVisibilityDashboard(currentVisibilityRuns[0] || null, currentVisibilityProject, false, currentVisibilityRuns);
         upsertVisibilityProjectCard(currentVisibilityProject);
+        updateVisibilityJourneyState();
         setVisibilityStatus('SERP/AIO bizonyítékimport mentve', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -865,6 +924,7 @@ async function runSerpApiEvidenceProbe() {
         renderSerpAioImportResult(currentVisibilitySerpAioImports);
         renderVisibilityDashboard(currentVisibilityRuns[0] || null, currentVisibilityProject, false, currentVisibilityRuns);
         upsertVisibilityProjectCard(currentVisibilityProject);
+        updateVisibilityJourneyState();
         setVisibilityStatus('SerpApi live SERP bizonyíték mentve', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -917,6 +977,7 @@ async function runGeminiGroundedProbe() {
         currentVisibilityProject.latest_gemini_grounding_run = currentVisibilityGeminiGroundingRuns[0] || null;
         renderVisibilityDashboard(currentVisibilityRuns[0] || null, currentVisibilityProject, false, currentVisibilityRuns);
         upsertVisibilityProjectCard(currentVisibilityProject);
+        updateVisibilityJourneyState();
         setVisibilityStatus('Gemini grounded AI bizonyíték mentve', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -1181,6 +1242,7 @@ async function runVisibilityMeasurement(runMode = 'generated') {
         renderVisibilityDashboard(payload.run, currentVisibilityProject, false, currentVisibilityRuns);
         upsertVisibilityProjectCard(currentVisibilityProject);
         if (exportVisibilityPdfButton) exportVisibilityPdfButton.disabled = false;
+        updateVisibilityJourneyState();
         setVisibilityStatus('Láthatóságmérés elkészült', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -1952,6 +2014,12 @@ function upsertVisibilityProjectCard(project) {
     card.className = 'visibility-project-card';
     card.dataset.project = JSON.stringify(project);
     card.innerHTML = html;
+    const listHead = visibilityProjectList.querySelector('.list-head');
+    if (listHead) {
+        listHead.insertAdjacentElement('afterend', card);
+        return;
+    }
+
     visibilityProjectList.prepend(card);
 }
 
