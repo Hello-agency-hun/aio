@@ -1,0 +1,23 @@
+# Runtime and private configuration
+/data/*_config.php
+!/data/*_config.sample.php
+/data/progress/
+/data/reports/
+/data/search_cache/
+/data/ga4_referral_imports/
+/data/serp_aio_imports/
+/data/gemini_grounding_runs/
+/data/visibility_projects/
+/data/visibility_runs/
+/data/*.log
+/data/*.err.log
+
+# Local scratch files
+/tmp/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
