@@ -60,6 +60,16 @@ const serpAioText = document.querySelector('#serpAioText');
 const serpAioImportResult = document.querySelector('#serpAioImportResult');
 const visibilityNextStepTitle = document.querySelector('#visibilityNextStepTitle');
 const visibilityNextStepText = document.querySelector('#visibilityNextStepText');
+const suggestVisibilityTopicsButton = document.querySelector('#suggestVisibilityTopicsButton');
+const topicSuggestionPanel = document.querySelector('#topicSuggestionPanel');
+const suggestVisibilityCompetitorsButton = document.querySelector('#suggestVisibilityCompetitorsButton');
+const competitorSuggestionPanel = document.querySelector('#competitorSuggestionPanel');
+const visibilityWizardTabs = document.querySelectorAll('[data-visibility-wizard-tab]');
+const visibilityWizardPanels = document.querySelectorAll('[data-wizard-panel]');
+const visibilityWizardHint = document.querySelector('#visibilityWizardHint');
+const visibilityWizardPrev = document.querySelector('#visibilityWizardPrev');
+const visibilityWizardNext = document.querySelector('#visibilityWizardNext');
+const visibilityWizardLabel = document.querySelector('#visibilityWizardLabel');
 
 const metricLabels = {
     technical: 'Elérhetőség',
@@ -89,6 +99,33 @@ let visibilityProgressTimer = null;
 let currentVisibilityProgressPercent = 0;
 let lastVisibilityProgressAt = 0;
 
+const visibilityWizardSteps = [
+    {
+        id: 'profile',
+        label: '1/4 Mérési profil',
+        next: 'Tovább a témákhoz',
+        hint: 'Kezdd a domainnel és a piaccal. A profil mentése után ugyanazt a mérést később újra tudod futtatni.',
+    },
+    {
+        id: 'topics',
+        label: '2/4 Témák és kérdések',
+        next: 'Tovább a versenytársakhoz',
+        hint: 'Itt azt állítod be, milyen vevői kérdésekben mérjük a márkát. Ha bizonytalan vagy, kérj AI témajavaslatot.',
+    },
+    {
+        id: 'competitors',
+        label: '3/4 Versenytársak',
+        next: 'Tovább a futtatáshoz',
+        hint: 'A versenytárslista segít megmutatni, kit idéznek vagy ajánlanak helyetted az AI válaszok.',
+    },
+    {
+        id: 'run',
+        label: '4/4 Mentés és mérés',
+        next: 'Futtatásnál maradok',
+        hint: 'Először mentsd a profilt, majd nézd meg a kérdés-előnézetet vagy indítsd el a tényleges mérést.',
+    },
+];
+
 const appViewAliases = {
     audit: 'audit',
     results: 'audit',
@@ -112,6 +149,7 @@ window.addEventListener('hashchange', () => {
 
 switchAppView(viewFromHash(window.location.hash), false);
 updateVisibilityJourneyState();
+setVisibilityWizardStep('profile');
 
 form?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -326,6 +364,24 @@ visibilityUrl?.addEventListener('blur', () => {
     }
 });
 
+visibilityWizardTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+        setVisibilityWizardStep(tab.dataset.visibilityWizardTab || 'profile', true);
+    });
+});
+
+visibilityWizardPrev?.addEventListener('click', () => {
+    const currentStep = getCurrentVisibilityWizardStep();
+    const currentIndex = visibilityWizardSteps.findIndex((step) => step.id === currentStep);
+    setVisibilityWizardStep(visibilityWizardSteps[Math.max(0, currentIndex - 1)]?.id || 'profile', true);
+});
+
+visibilityWizardNext?.addEventListener('click', () => {
+    const currentStep = getCurrentVisibilityWizardStep();
+    const currentIndex = visibilityWizardSteps.findIndex((step) => step.id === currentStep);
+    setVisibilityWizardStep(visibilityWizardSteps[Math.min(visibilityWizardSteps.length - 1, currentIndex + 1)]?.id || 'run', true);
+});
+
 visibilityProjectForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
     await saveVisibilityProject();
@@ -341,6 +397,32 @@ previewVisibilityQueriesButton?.addEventListener('click', async () => {
 
 previewPortfolioButton?.addEventListener('click', async () => {
     await previewVisibilityQueries('weekly_portfolio');
+});
+
+suggestVisibilityTopicsButton?.addEventListener('click', async () => {
+    await suggestVisibilityTopics();
+});
+
+topicSuggestionPanel?.addEventListener('click', (event) => {
+    const applyButton = event.target.closest('[data-apply-topic-suggestions]');
+    if (!applyButton) {
+        return;
+    }
+
+    applySelectedTopicSuggestions();
+});
+
+suggestVisibilityCompetitorsButton?.addEventListener('click', async () => {
+    await suggestVisibilityCompetitors();
+});
+
+competitorSuggestionPanel?.addEventListener('click', (event) => {
+    const applyButton = event.target.closest('[data-apply-competitor-suggestions]');
+    if (!applyButton) {
+        return;
+    }
+
+    applySelectedCompetitorSuggestions();
 });
 
 runWeeklyPortfolioButton?.addEventListener('click', async () => {
@@ -606,6 +688,54 @@ function updateVisibilityJourneyState() {
     visibilityNextStepText.textContent = 'Van mérési futás és legalább egy kontrolladat. A PDF riport már a mérés, bizonyítékok és javítási backlog alapján készül.';
 }
 
+function getCurrentVisibilityWizardStep() {
+    const activeTab = Array.from(visibilityWizardTabs).find((tab) => tab.classList.contains('active'));
+    return activeTab?.dataset.visibilityWizardTab || 'profile';
+}
+
+function setVisibilityWizardStep(stepId = 'profile', shouldScroll = false) {
+    if (!visibilityWizardTabs.length || !visibilityWizardPanels.length) {
+        return;
+    }
+
+    const step = visibilityWizardSteps.find((item) => item.id === stepId) || visibilityWizardSteps[0];
+    const stepIndex = visibilityWizardSteps.findIndex((item) => item.id === step.id);
+
+    visibilityWizardTabs.forEach((tab) => {
+        const isActive = tab.dataset.visibilityWizardTab === step.id;
+        tab.classList.toggle('active', isActive);
+        tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    visibilityWizardPanels.forEach((panel) => {
+        const isActive = panel.dataset.wizardPanel === step.id;
+        panel.classList.toggle('active', isActive);
+        panel.toggleAttribute('hidden', !isActive);
+    });
+
+    if (visibilityWizardHint) {
+        visibilityWizardHint.textContent = step.hint;
+    }
+
+    if (visibilityWizardLabel) {
+        visibilityWizardLabel.textContent = step.label;
+    }
+
+    if (visibilityWizardPrev) {
+        visibilityWizardPrev.disabled = stepIndex <= 0;
+    }
+
+    if (visibilityWizardNext) {
+        visibilityWizardNext.disabled = stepIndex >= visibilityWizardSteps.length - 1;
+        visibilityWizardNext.textContent = step.next;
+    }
+
+    if (shouldScroll) {
+        const activePanel = Array.from(visibilityWizardPanels).find((panel) => panel.dataset.wizardPanel === step.id);
+        activePanel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
 async function saveVisibilityProject() {
     if (!visibilityProjectForm) {
         return;
@@ -639,6 +769,7 @@ async function saveVisibilityProject() {
         loadVisibilityProject(payload.project);
         upsertVisibilityProjectCard(payload.project);
         updateVisibilityJourneyState();
+        setVisibilityWizardStep('run', true);
         setVisibilityStatus('Projekt mentve, mérés indítható', 'success');
     } catch (error) {
         setVisibilityStatus(error.message, 'error');
@@ -740,6 +871,258 @@ function renderVisibilityQueryPreview(project, queries = [], runMode = 'generate
     `;
 }
 
+async function suggestVisibilityTopics() {
+    const formData = prepareVisibilityFormData();
+    if (!formData) {
+        setVisibilityStatus('Adj meg előbb egy publikus domaint vagy URL-t. Abból tudok releváns témákat ajánlani.', 'error');
+        return;
+    }
+
+    const originalLabel = suggestVisibilityTopicsButton?.textContent || '';
+    if (suggestVisibilityTopicsButton) {
+        suggestVisibilityTopicsButton.disabled = true;
+        suggestVisibilityTopicsButton.textContent = 'Témák készülnek...';
+    }
+
+    if (topicSuggestionPanel) {
+        topicSuggestionPanel.classList.remove('hidden');
+        topicSuggestionPanel.innerHTML = `
+            <div class="topic-helper-loading">
+                <strong>AI témasegéd dolgozik...</strong>
+                <p>Megnézem a domaint, az üzleti modellt és a piacot, majd mérhető témákat javaslok.</p>
+            </div>
+        `;
+    }
+    setVisibilityStatus('AI témasegéd fut...', 'neutral');
+
+    try {
+        const response = await fetch('api/suggest_visibility_topics.php', {
+            method: 'POST',
+            headers: { Accept: 'application/json' },
+            body: new URLSearchParams(formData),
+        });
+        const payload = await response.json();
+        if (!payload.ok) {
+            throw new Error(payload.message || 'A témasegéd nem tudott javaslatot adni.');
+        }
+
+        renderTopicSuggestions(payload);
+        setVisibilityStatus(payload.source === 'openrouter' ? 'AI témák elkészültek' : 'Témasablon elkészült', 'success');
+    } catch (error) {
+        if (topicSuggestionPanel) {
+            topicSuggestionPanel.classList.remove('hidden');
+            topicSuggestionPanel.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+        }
+        setVisibilityStatus(error.message, 'error');
+    } finally {
+        if (suggestVisibilityTopicsButton) {
+            suggestVisibilityTopicsButton.disabled = false;
+            suggestVisibilityTopicsButton.textContent = originalLabel;
+        }
+    }
+}
+
+function renderTopicSuggestions(payload = {}) {
+    if (!topicSuggestionPanel) {
+        return;
+    }
+
+    const suggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+    topicSuggestionPanel.classList.remove('hidden');
+    topicSuggestionPanel.innerHTML = `
+        <div class="topic-suggestion-head">
+            <div>
+                <span>${escapeHtml(payload.source === 'openrouter' ? 'AI javaslat' : 'Biztonsági témasablon')}</span>
+                <h4>Javasolt mérési témák</h4>
+                <p>${escapeHtml(payload.message || 'Válaszd ki, mely témákat szeretnéd betölteni a mérési profilba.')}</p>
+            </div>
+            <button type="button" class="mini-button" data-apply-topic-suggestions>Kiválasztott témák betöltése</button>
+        </div>
+        <div class="topic-suggestion-grid">
+            ${suggestions.map((item, index) => renderTopicSuggestionCard(item, index)).join('') || '<p class="empty-state">Nem érkezett témalistajavaslat.</p>'}
+        </div>
+    `;
+}
+
+function renderTopicSuggestionCard(item = {}, index = 0) {
+    const topic = String(item.topic || '').trim();
+    const questions = Array.isArray(item.example_questions) ? item.example_questions : [];
+    const priority = item.priority === 'high' ? 'Magas' : (item.priority === 'low' ? 'Alacsony' : 'Közepes');
+
+    return `
+        <label class="topic-suggestion-card">
+            <input type="checkbox" value="${escapeHtml(topic)}" checked>
+            <span>${escapeHtml(priority)} prioritás · ${escapeHtml(item.intent || 'mérési téma')}</span>
+            <strong>${escapeHtml(topic || `Javasolt téma ${index + 1}`)}</strong>
+            <p>${escapeHtml(item.why || 'Erre a témára később vevői kérdéseket lehet mérni.')}</p>
+            ${questions.length ? `
+                <small>${escapeHtml(questions.slice(0, 2).join(' · '))}</small>
+            ` : ''}
+        </label>
+    `;
+}
+
+function applySelectedTopicSuggestions() {
+    const topicsInput = document.querySelector('#visibilityTopics');
+    if (!topicsInput || !topicSuggestionPanel) {
+        return;
+    }
+
+    const selectedTopics = Array.from(topicSuggestionPanel.querySelectorAll('.topic-suggestion-card input:checked'))
+        .map((input) => String(input.value || '').trim())
+        .filter(Boolean);
+
+    if (!selectedTopics.length) {
+        setVisibilityStatus('Válassz ki legalább egy témát a betöltéshez.', 'error');
+        return;
+    }
+
+    const existing = String(topicsInput.value || '')
+        .split(/\r?\n|,|;/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    const merged = Array.from(new Set([...existing, ...selectedTopics]));
+    topicsInput.value = merged.join('\n');
+    setVisibilityStatus(`${selectedTopics.length} témát betöltöttem a mérési profilba`, 'success');
+}
+
+async function suggestVisibilityCompetitors() {
+    const formData = prepareVisibilityFormData();
+    if (!formData) {
+        setVisibilityStatus('Adj meg előbb egy publikus domaint vagy URL-t. Abból tudok versenytársakat ajánlani.', 'error');
+        return;
+    }
+
+    const originalLabel = suggestVisibilityCompetitorsButton?.textContent || '';
+    if (suggestVisibilityCompetitorsButton) {
+        suggestVisibilityCompetitorsButton.disabled = true;
+        suggestVisibilityCompetitorsButton.textContent = 'Jelöltek készülnek...';
+    }
+
+    if (competitorSuggestionPanel) {
+        competitorSuggestionPanel.classList.remove('hidden');
+        competitorSuggestionPanel.innerHTML = `
+            <div class="competitor-helper-loading">
+                <strong>Versenytársjelöltek keresése...</strong>
+                <p>A témák, piac és domain alapján keresési vagy AI jelölteket állítok össze.</p>
+            </div>
+        `;
+    }
+    setVisibilityStatus('Versenytárssegéd fut...', 'neutral');
+
+    try {
+        const response = await fetch('api/suggest_visibility_competitors.php', {
+            method: 'POST',
+            headers: { Accept: 'application/json' },
+            body: new URLSearchParams(formData),
+        });
+        const payload = await response.json();
+        if (!payload.ok) {
+            throw new Error(payload.message || 'A versenytárssegéd nem tudott javaslatot adni.');
+        }
+
+        renderCompetitorSuggestions(payload);
+        setVisibilityStatus(payload.suggestions?.length ? 'Versenytársjelöltek elkészültek' : 'Nem találtam megbízható versenytársjelöltet', payload.suggestions?.length ? 'success' : 'neutral');
+    } catch (error) {
+        if (competitorSuggestionPanel) {
+            competitorSuggestionPanel.classList.remove('hidden');
+            competitorSuggestionPanel.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+        }
+        setVisibilityStatus(error.message, 'error');
+    } finally {
+        if (suggestVisibilityCompetitorsButton) {
+            suggestVisibilityCompetitorsButton.disabled = false;
+            suggestVisibilityCompetitorsButton.textContent = originalLabel;
+        }
+    }
+}
+
+function renderCompetitorSuggestions(payload = {}) {
+    if (!competitorSuggestionPanel) {
+        return;
+    }
+
+    const suggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+    competitorSuggestionPanel.classList.remove('hidden');
+    competitorSuggestionPanel.innerHTML = `
+        <div class="competitor-suggestion-head">
+            <div>
+                <span>${escapeHtml(competitorSuggestionSourceLabel(payload.source || ''))}</span>
+                <h4>Javasolt versenytársak</h4>
+                <p>${escapeHtml(payload.message || 'Válaszd ki, mely domaineket szeretnéd betölteni a mérési profilba.')}</p>
+            </div>
+            <button type="button" class="mini-button" data-apply-competitor-suggestions ${suggestions.length ? '' : 'disabled'}>Kiválasztott domainek betöltése</button>
+        </div>
+        <div class="competitor-suggestion-grid">
+            ${suggestions.map((item) => renderCompetitorSuggestionCard(item)).join('') || '<p class="empty-state">Nem érkezett megbízható versenytársjelölt. Adj meg 2-3 témát, vagy ellenőrizd a keresési/AI provider beállítást.</p>'}
+        </div>
+    `;
+}
+
+function renderCompetitorSuggestionCard(item = {}) {
+    const domain = String(item.domain || '').trim();
+    const confidence = item.confidence === 'high' ? 'Magas' : (item.confidence === 'low' ? 'Alacsony' : 'Közepes');
+    const source = item.source === 'search' ? 'keresési találat' : (item.source === 'search_ai' ? 'keresés + AI' : 'AI hipotézis');
+    const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+    const evidenceText = evidence.map((entry) => {
+        if (typeof entry === 'string') {
+            return entry;
+        }
+        if (entry && typeof entry === 'object') {
+            return [entry.query, entry.title, entry.provider].filter(Boolean).join(' · ');
+        }
+        return '';
+    }).filter(Boolean).slice(0, 2).join(' · ');
+
+    return `
+        <label class="competitor-suggestion-card">
+            <input type="checkbox" value="${escapeHtml(domain)}" ${domain ? 'checked' : ''}>
+            <span>${escapeHtml(confidence)} biztonság · ${escapeHtml(source)}</span>
+            <strong>${escapeHtml(item.name || domain)}</strong>
+            <code>${escapeHtml(domain)}</code>
+            <p>${escapeHtml(item.why || 'Lehetséges benchmark jelölt az AI láthatósági méréshez.')}</p>
+            ${evidenceText ? `<small>${escapeHtml(evidenceText)}</small>` : ''}
+        </label>
+    `;
+}
+
+function competitorSuggestionSourceLabel(source) {
+    if (source === 'search_and_ai') {
+        return 'Keresés + AI';
+    }
+    if (source === 'search') {
+        return 'Keresési evidencia';
+    }
+    if (source === 'openrouter') {
+        return 'AI hipotézis';
+    }
+    return 'Javaslat';
+}
+
+function applySelectedCompetitorSuggestions() {
+    const competitorsInput = document.querySelector('#visibilityCompetitors');
+    if (!competitorsInput || !competitorSuggestionPanel) {
+        return;
+    }
+
+    const selectedDomains = Array.from(competitorSuggestionPanel.querySelectorAll('.competitor-suggestion-card input:checked'))
+        .map((input) => String(input.value || '').trim())
+        .filter(Boolean);
+
+    if (!selectedDomains.length) {
+        setVisibilityStatus('Válassz ki legalább egy versenytársdomaint a betöltéshez.', 'error');
+        return;
+    }
+
+    const existing = String(competitorsInput.value || '')
+        .split(/\r?\n|,|;/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    const merged = Array.from(new Set([...existing, ...selectedDomains]));
+    competitorsInput.value = merged.join('\n');
+    setVisibilityStatus(`${selectedDomains.length} versenytársdomaint betöltöttem a mérési profilba`, 'success');
+}
+
 function loadVisibilityProject(project) {
     currentVisibilityProject = project;
     currentVisibilityRuns = project.latest_run ? [project.latest_run] : [];
@@ -769,6 +1152,7 @@ function loadVisibilityProject(project) {
     renderGa4ImportResult(currentVisibilityGa4Imports);
     renderSerpAioImportResult(currentVisibilitySerpAioImports);
     updateVisibilityJourneyState();
+    setVisibilityWizardStep('run', true);
 }
 
 async function importGa4Referrals() {
@@ -2903,10 +3287,14 @@ function renderPages(pages) {
         const rawLabel = raw.visible_word_count !== undefined
             ? ` · raw HTML: ${Number(raw.visible_word_count || 0)} szó, ${Number(raw.text_to_html_ratio_percent || 0)}% szövegarány`
             : '';
+        const indexing = page.indexing_signals || {};
+        const indexingLabel = indexing.has_noindex
+            ? ` · noindex: ${indexing.indexing_intent_label || 'kézi ellenőrzés'}`
+            : '';
         row.innerHTML = `
             <div>
                 <strong>${escapeHtml(page.url)}</strong>
-                <small>${escapeHtml(page.title || page.error || 'Nincs cím')} · ${Number(page.word_count || 0)} szó · ${Number(page.load_time_ms || 0)} ms${escapeHtml(rawLabel)}</small>
+                <small>${escapeHtml(page.title || page.error || 'Nincs cím')} · ${Number(page.word_count || 0)} szó · ${Number(page.load_time_ms || 0)} ms${escapeHtml(rawLabel)}${escapeHtml(indexingLabel)}</small>
             </div>
             <span class="page-score">${Number(page.score || 0)}/100</span>
         `;
@@ -2919,6 +3307,8 @@ function renderSignals(pages) {
 
     const signalNames = {
         has_raw_html_content: { label: 'Raw HTML-ben látható tartalom', tip: 'A fontos szöveg már a szerver által küldött HTML-ben is olvasható. Ez kritikus, mert több AI crawler nem futtat JavaScriptet.' },
+        has_noindex: { label: 'Noindex jel', tip: 'Az oldal meta robots noindex direktívát tartalmaz. Ez navigációs, kategória/tag, keresési, paginációs vagy technikai oldalnál gyakran szándékos; fontos landing/cikk/termék oldalon viszont gyanús hiba lehet.' },
+        suspicious_noindex: { label: 'Gyanús noindex', tip: 'Az oldal noindexelt, de a tartalma vagy típusa alapján organikus/AIO céloldal is lehet. Ilyenkor először az indexelési döntést kell ellenőrizni, csak utána jön a meta/schema javítás.' },
         avoids_client_rendered_shell: { label: 'Nem üres SPA shell', tip: 'Az oldal nem csak egy üres app/root konténert és scripteket küld vissza. A crawler JavaScript nélkül is talál értelmes tartalmat.' },
         has_low_js_dependency: { label: 'Alacsony JS-függőség', tip: 'A nyers HTML és a látható szöveg aránya nem utal arra, hogy a fő tartalom kizárólag hidratálás vagy AJAX után jelenne meg.' },
         has_meta_viewport: { label: 'Mobil viewport meta', tip: 'A mobilbarát megjelenés alapjele. Segít a reszponzív értelmezésben és a stabil mobil UX-ben.' },

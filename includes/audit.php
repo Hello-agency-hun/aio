@@ -738,8 +738,9 @@ function analyze_html_page(string $url, string $html, int $statusCode, int $load
     $rawHtmlSignals = extract_raw_html_signals($xpath, $html, $text);
     $uxSignals = extract_ux_signals($xpath, $url, $text, $title, $description, $h1s);
     $contextSignals = detect_page_context($text, $structuredData);
-    $signals = build_page_signals($xpath, $text, $structuredData, $answerBlocks, $entitySignals, $mediaSignals, $rawHtmlSignals, $uxSignals, $contextSignals);
-    $issues = build_page_issues($title, $description, $h1s, $headings, $images->length, $imagesWithoutAlt, $structuredData, $signals, $loadTimeMs, $answerBlocks, $entitySignals, $rawHtmlSignals, $uxSignals, $downloadWarning);
+    $indexingSignals = extract_indexing_signals($xpath, $url, $text, $title, $description, $h1s, $structuredData);
+    $signals = build_page_signals($xpath, $text, $structuredData, $answerBlocks, $entitySignals, $mediaSignals, $rawHtmlSignals, $uxSignals, $contextSignals, $indexingSignals);
+    $issues = build_page_issues($url, $title, $description, $h1s, $headings, $images->length, $imagesWithoutAlt, $structuredData, $signals, $loadTimeMs, $answerBlocks, $entitySignals, $rawHtmlSignals, $uxSignals, $indexingSignals, $downloadWarning);
     $score = page_score($issues, $signals);
 
     return [
@@ -762,6 +763,7 @@ function analyze_html_page(string $url, string $html, int $statusCode, int $load
         'raw_html_signals' => $rawHtmlSignals,
         'ux_signals' => $uxSignals,
         'context_signals' => $contextSignals,
+        'indexing_signals' => $indexingSignals,
         'signals' => $signals,
         'issues' => $issues,
         'links' => $links,
@@ -819,6 +821,99 @@ function meta_content(DOMXPath $xpath, string $name): string
     $nodes = $xpath->query($query);
 
     return $nodes && $nodes->length ? trim((string) $nodes->item(0)?->nodeValue) : '';
+}
+
+function extract_indexing_signals(DOMXPath $xpath, string $url, string $text, string $title, string $description, array $h1s, array $structuredData): array
+{
+    $robotsContent = [];
+    foreach (['robots', 'googlebot', 'bingbot'] as $name) {
+        $content = meta_content($xpath, $name);
+        if ($content !== '') {
+            $robotsContent[$name] = text_lower($content);
+        }
+    }
+
+    $combinedRobots = implode(',', $robotsContent);
+    $hasNoindex = preg_match('~(^|[,;\s])(noindex|none)([,;\s]|$)~i', $combinedRobots) === 1;
+    $hasNofollow = preg_match('~(^|[,;\s])nofollow([,;\s]|$)~i', $combinedRobots) === 1;
+    $pageType = classify_indexing_page_type($url, $text, $title, $description, $h1s, $structuredData);
+    $wordCount = count_words($text);
+    $path = strtolower((string) parse_url($url, PHP_URL_PATH));
+    $isHomepage = $path === '' || $path === '/';
+    $hasContentSchema = contains_type(array_map(static fn (array $item): string => is_array($item['type'] ?? null) ? implode(',', $item['type']) : (string) ($item['type'] ?? ''), $structuredData), 'Article')
+        || contains_type(array_map(static fn (array $item): string => is_array($item['type'] ?? null) ? implode(',', $item['type']) : (string) ($item['type'] ?? ''), $structuredData), 'Product')
+        || contains_type(array_map(static fn (array $item): string => is_array($item['type'] ?? null) ? implode(',', $item['type']) : (string) ($item['type'] ?? ''), $structuredData), 'Service');
+
+    $likelyIntentionalTypes = ['navigation_archive', 'search_results', 'pagination', 'account_or_checkout', 'utility'];
+    $likelyIntentionalNoindex = $hasNoindex && in_array($pageType, $likelyIntentionalTypes, true);
+    $suspiciousNoindex = $hasNoindex
+        && !$likelyIntentionalNoindex
+        && ($isHomepage || $hasContentSchema || $wordCount >= 280 || count($h1s) === 1);
+
+    return [
+        'robots_meta' => $robotsContent,
+        'has_noindex' => $hasNoindex,
+        'has_nofollow' => $hasNofollow,
+        'page_type' => $pageType,
+        'is_homepage' => $isHomepage,
+        'likely_intentional_noindex' => $likelyIntentionalNoindex,
+        'suspicious_noindex' => $suspiciousNoindex,
+        'should_audit_index_metadata' => !$hasNoindex || $suspiciousNoindex,
+        'indexing_intent_label' => match (true) {
+            $suspiciousNoindex => 'Gyanús noindex fontos tartalmi oldalon',
+            $likelyIntentionalNoindex => 'Valószínűleg szándékos noindex navigációs/technikai oldalon',
+            $hasNoindex => 'Noindex oldal, kézi döntést igényel',
+            default => 'Indexelésre alkalmas jelölt',
+        },
+    ];
+}
+
+function classify_indexing_page_type(string $url, string $text, string $title, string $description, array $h1s, array $structuredData): string
+{
+    $path = strtolower((string) parse_url($url, PHP_URL_PATH));
+    $query = strtolower((string) parse_url($url, PHP_URL_QUERY));
+    $labelText = text_lower(trim($title . ' ' . $description . ' ' . implode(' ', $h1s)));
+    $types = array_map(static fn (array $item): string => is_array($item['type'] ?? null) ? implode(',', $item['type']) : (string) ($item['type'] ?? ''), $structuredData);
+
+    if (preg_match('~/(cart|checkout|kosar|penztar|fiokom|account|login|register|wp-admin|admin)(/|$)~i', $path)) {
+        return 'account_or_checkout';
+    }
+
+    if (preg_match('~/(search|kereses)(/|$)|(^|&)s=|(^|&)q=|(^|&)search=~i', $path . '&' . $query)
+        || preg_match('~\b(keresési találatok|search results|nincs találat)\b~iu', $labelText)) {
+        return 'search_results';
+    }
+
+    if (preg_match('~/(page|oldal)/[0-9]+(/|$)|[?&](paged|page|p)=[0-9]+~i', $path . '?' . $query)) {
+        return 'pagination';
+    }
+
+    if (preg_match('~/(category|kategoria|tag|cimke|author|szerzo|archive|archivum|blog/category|termek-kategoria)(/|$)~i', $path)
+        || preg_match('~\b(kategória|category|címke|tag|archívum|archive|szerző cikkei|author archive)\b~iu', $labelText)) {
+        return 'navigation_archive';
+    }
+
+    if (preg_match('~/(privacy|adatvedelem|aszf|terms|cookie|impresszum)(/|$)~i', $path)) {
+        return 'utility';
+    }
+
+    if (contains_type($types, 'Article') || contains_type($types, 'BlogPosting')) {
+        return 'article';
+    }
+
+    if (contains_type($types, 'Product')) {
+        return 'product';
+    }
+
+    if (contains_type($types, 'Service')) {
+        return 'service';
+    }
+
+    if (count_words($text) < 120 && preg_match('~\b(kategória|category|blog|hírek|news|termékek|products)\b~iu', $labelText)) {
+        return 'navigation_archive';
+    }
+
+    return 'content_or_landing';
 }
 
 function extract_structured_data(DOMXPath $xpath): array
@@ -1159,7 +1254,7 @@ function extract_links(DOMXPath $xpath, string $baseUrl): array
     ];
 }
 
-function build_page_signals(DOMXPath $xpath, string $text, array $structuredData, array $answerBlocks, array $entitySignals, array $mediaSignals, array $rawHtmlSignals, array $uxSignals, array $contextSignals): array
+function build_page_signals(DOMXPath $xpath, string $text, array $structuredData, array $answerBlocks, array $entitySignals, array $mediaSignals, array $rawHtmlSignals, array $uxSignals, array $contextSignals, array $indexingSignals): array
 {
     $lower = text_lower($text);
     $types = array_map(static fn (array $item): string => is_array($item['type'] ?? null) ? implode(',', $item['type']) : (string) ($item['type'] ?? ''), $structuredData);
@@ -1171,6 +1266,10 @@ function build_page_signals(DOMXPath $xpath, string $text, array $structuredData
         'is_b2b_or_service_context' => ($contextSignals['is_b2b_or_service'] ?? false) === true,
         'is_ecommerce_context' => ($contextSignals['is_ecommerce'] ?? false) === true,
         'is_health_or_government_context' => ($contextSignals['is_health_or_government'] ?? false) === true,
+        'has_noindex' => ($indexingSignals['has_noindex'] ?? false) === true,
+        'likely_intentional_noindex' => ($indexingSignals['likely_intentional_noindex'] ?? false) === true,
+        'suspicious_noindex' => ($indexingSignals['suspicious_noindex'] ?? false) === true,
+        'should_audit_index_metadata' => ($indexingSignals['should_audit_index_metadata'] ?? true) === true,
         'has_faq_schema' => contains_type($types, 'FAQPage'),
         'has_article_schema' => contains_type($types, 'Article') || contains_type($types, 'BlogPosting'),
         'has_organization_schema' => contains_type($types, 'Organization') || contains_type($types, 'LocalBusiness'),
@@ -1215,44 +1314,72 @@ function contains_type(array $types, string $needle): bool
     return false;
 }
 
-function build_page_issues(string $title, string $description, array $h1s, array $headings, int $imagesTotal, int $imagesWithoutAlt, array $structuredData, array $signals, int $loadTimeMs, array $answerBlocks, array $entitySignals, array $rawHtmlSignals, array $uxSignals, ?string $downloadWarning): array
+function build_page_issues(string $url, string $title, string $description, array $h1s, array $headings, int $imagesTotal, int $imagesWithoutAlt, array $structuredData, array $signals, int $loadTimeMs, array $answerBlocks, array $entitySignals, array $rawHtmlSignals, array $uxSignals, array $indexingSignals, ?string $downloadWarning): array
 {
     $issues = [];
+    $shouldAuditIndexMetadata = ($indexingSignals['should_audit_index_metadata'] ?? true) === true;
+    $hasNoindex = ($indexingSignals['has_noindex'] ?? false) === true;
+    $likelyIntentionalNoindex = ($indexingSignals['likely_intentional_noindex'] ?? false) === true;
+    $suspiciousNoindex = ($indexingSignals['suspicious_noindex'] ?? false) === true;
 
-    add_issue($issues, $title === '', 'critical', 'Hiányzik a title tag.', 'Adj minden fontos oldalnak egyedi, 45-65 karakteres címet, amely tartalmazza a fő entitást és az ígéretet.');
-    add_issue($issues, text_length($title) > 70, 'warning', 'A title túl hosszú lehet.', 'Rövidítsd úgy, hogy a kereső és AI összefoglalókban is gyorsan értelmezhető maradjon.');
-    add_issue($issues, $description === '', 'critical', 'Hiányzik a meta description.', 'Írj 140-160 karakteres összefoglalót, amely konkrét választ ad arra, mire jó az oldal.');
-    add_issue($issues, count($h1s) !== 1, 'critical', 'Nem pontosan egy H1 címsor található.', 'Használj egyetlen H1-et, amely világosan megnevezi az oldal témáját.');
-    add_issue($issues, !($signals['has_clear_page_purpose'] ?? false), 'warning', 'Nem elég egyértelmű az oldal célja és célközönsége.', 'Tisztázd, hogy az oldal kinek szól, milyen döntést segít, és mi a következő lépés. A H1, bevezető és első CTA ugyanarra az útvonalra mutasson.');
+    add_issue(
+        $issues,
+        $suspiciousNoindex,
+        'critical',
+        'Gyanús noindex jel fontos tartalmi oldalon.',
+        'Ellenőrizd, hogy ezt az oldalt valóban ki akarjátok-e zárni az organikus keresésből. Ha szolgáltatás-, termék-, cikk- vagy fő landing oldal, távolítsd el a noindex meta robots direktívát, majd csak ezután priorizáld a title, description, H1 és strukturált adat javításokat.'
+    );
+
+    add_issue(
+        $issues,
+        $likelyIntentionalNoindex,
+        'info',
+        'Valószínűleg szándékos noindex navigációs vagy technikai oldalon.',
+        'Ezt ne kezeld automatikus SEO hibaként. Kategória-, tag-, keresési, paginációs, kosár/fiók vagy más navigációs oldalnál gyakran helyes döntés a noindex. Ilyenkor a meta title/description javítás csak UX vagy belső adminisztrációs okból fontos, nem organikus/AIO láthatósági prioritás.'
+    );
+
+    add_issue(
+        $issues,
+        $hasNoindex && !$likelyIntentionalNoindex && !$suspiciousNoindex,
+        'warning',
+        'Noindex oldal, kézi indexelési döntést igényel.',
+        'Döntsd el, hogy az oldal organikus keresési céloldal-e. Ha igen, távolítsd el a noindexet és kezeld SEO/AIO céloldalként. Ha nem, ne pazarolj prioritást snippet-meta optimalizálásra; inkább a belső navigációs szerepét és a felhasználói útvonalat ellenőrizd.'
+    );
+
+    add_issue($issues, $shouldAuditIndexMetadata && $title === '', 'critical', 'Hiányzik a title tag.', 'Adj minden indexelésre szánt fontos oldalnak egyedi, 45-65 karakteres címet, amely tartalmazza a fő entitást és az ígéretet.');
+    add_issue($issues, $shouldAuditIndexMetadata && text_length($title) > 70, 'warning', 'A title túl hosszú lehet.', 'Rövidítsd úgy, hogy a kereső és AI összefoglalókban is gyorsan értelmezhető maradjon.');
+    add_issue($issues, $shouldAuditIndexMetadata && $description === '', 'critical', 'Hiányzik a meta description.', 'Indexelésre szánt oldalnál írj 140-160 karakteres összefoglalót, amely konkrét választ ad arra, mire jó az oldal. Szándékosan noindex navigációs oldalnál ez nem organikus prioritás.');
+    add_issue($issues, $shouldAuditIndexMetadata && count($h1s) !== 1, 'critical', 'Nem pontosan egy H1 címsor található.', 'Indexelésre és AI idézhetőségre szánt oldalnál használj egyetlen H1-et, amely világosan megnevezi az oldal témáját.');
+    add_issue($issues, $shouldAuditIndexMetadata && !($signals['has_clear_page_purpose'] ?? false), 'warning', 'Nem elég egyértelmű az oldal célja és célközönsége.', 'Tisztázd, hogy az oldal kinek szól, milyen döntést segít, és mi a következő lépés. A H1, bevezető és első CTA ugyanarra az útvonalra mutasson.');
     add_issue($issues, !($signals['has_manageable_navigation'] ?? false), 'warning', 'A fontos oldalak túl sok menülépés után érhetők el.', 'Egyszerűsítsd a fő navigációt célcsoport vagy user journey szerint. A legfontosabb kategóriák legyenek kattintható landing oldalak, ne csak rejtett, többszintű lenyílók.');
     add_issue($issues, ($uxSignals['has_external_nav_links'] ?? false) === true, 'info', 'Külső oldalak keverednek a fő navigációba.', 'Jelöld vizuálisan és szövegben is, ha egy menüpont külső oldalra, webshopba vagy külön karrierfelületre visz.');
     add_issue($issues, !($signals['has_consistent_cta_language'] ?? false), 'info', 'A CTA gombok nyelvezete nem elég következetes.', 'Egységesítsd a gombokat: külön minta kapcsolatfelvételre, további információra, letöltésre és külső felületre.');
     add_issue($issues, !($signals['has_contact_path'] ?? false), 'warning', 'Nincs egyértelmű kapcsolatfelvételi út.', 'Adj kiszámítható kontakt útvonalat a fő CTA-ban és a láblécben is. Kerüld, hogy ugyanaz a kontaktfolyamat hol popupként, hol külön oldalként jelenjen meg.');
     add_issue($issues, !($signals['has_newsletter_or_lead_capture'] ?? false), 'info', 'Nem látszik hírlevél vagy lead capture lehetőség.', 'Ha az oldal célja bizalomépítés vagy sales támogatás, adj hírlevél-feliratkozást, letölthető anyagot vagy ajánlatkérő modult releváns pontokra.');
-    add_issue($issues, count($headings['h2'] ?? []) < 2, 'warning', 'Kevés H2 szakaszcím van.', 'Törd a tartalmat kérdés-válasz jellegű, jól idézhető szakaszokra.');
+    add_issue($issues, $shouldAuditIndexMetadata && count($headings['h2'] ?? []) < 2, 'warning', 'Kevés H2 szakaszcím van.', 'Indexelésre szánt tartalmi oldalon törd a tartalmat kérdés-válasz jellegű, jól idézhető szakaszokra.');
     add_issue($issues, $imagesTotal > 0 && $imagesWithoutAlt > 0, 'warning', 'Vannak alt szöveg nélküli képek.', 'Adj leíró alt szöveget a képeknek, különösen ahol termék, szolgáltatás vagy folyamat látható.');
-    add_issue($issues, ($rawHtmlSignals['likely_client_rendered_shell'] ?? false) === true, 'critical', 'A fő tartalom valószínűleg JavaScript után jelenik meg.', 'Tedd a legfontosabb szöveget már a szerver által küldött HTML-be SSR, SSG vagy statikus HTML segítségével. Sok AI crawler nem futtat JavaScriptet.');
-    add_issue($issues, !($signals['has_raw_html_content'] ?? false), 'warning', 'Kevés értelmes tartalom látszik a nyers HTML-ben.', 'Növeld a szerveroldalon érkező főszöveget: címsorok, szolgáltatásleírás, ár/folyamat/FAQ válaszok és belső linkek ne csak kliensoldali rendereléssel jelenjenek meg.');
-    add_issue($issues, !($signals['has_low_js_dependency'] ?? false), 'warning', 'Magas JavaScript-függőség látszik a nyers HTML-hez képest.', 'A kritikus tartalmat és navigációt ne bízd kizárólag hidratálásra vagy AJAX hívásokra; a crawlernek az első HTML válaszban is legyen mit olvasnia.');
+    add_issue($issues, $shouldAuditIndexMetadata && ($rawHtmlSignals['likely_client_rendered_shell'] ?? false) === true, 'critical', 'A fő tartalom valószínűleg JavaScript után jelenik meg.', 'Indexelésre/AIO láthatóságra szánt oldalon tedd a legfontosabb szöveget már a szerver által küldött HTML-be SSR, SSG vagy statikus HTML segítségével. Sok AI crawler nem futtat JavaScriptet.');
+    add_issue($issues, $shouldAuditIndexMetadata && !($signals['has_raw_html_content'] ?? false), 'warning', 'Kevés értelmes tartalom látszik a nyers HTML-ben.', 'Indexelésre szánt oldalon növeld a szerveroldalon érkező főszöveget: címsorok, szolgáltatásleírás, ár/folyamat/FAQ válaszok és belső linkek ne csak kliensoldali rendereléssel jelenjenek meg.');
+    add_issue($issues, $shouldAuditIndexMetadata && !($signals['has_low_js_dependency'] ?? false), 'warning', 'Magas JavaScript-függőség látszik a nyers HTML-hez képest.', 'Indexelésre szánt oldalon a kritikus tartalmat és navigációt ne bízd kizárólag hidratálásra vagy AJAX hívásokra; a crawlernek az első HTML válaszban is legyen mit olvasnia.');
     add_issue($issues, !($signals['has_meta_viewport'] ?? false), 'info', 'Hiányzik a mobil viewport meta tag.', 'Adj <meta name="viewport" content="width=device-width, initial-scale=1"> sort, hogy a mobilbarát értelmezés és megjelenítés stabil legyen.');
-    add_issue($issues, (($signals['is_b2b_or_service_context'] ?? false) === true || ($signals['is_ecommerce_context'] ?? false) === true) && !($signals['has_contextual_qa_support'] ?? false), 'warning', 'Hiányzik a kontextushoz illő döntéstámogató Q&A tartalom.', 'B2B oldalon ne általános GYIK-et írj: válaszolj a döntéshozói kérdésekre, például kinek való, milyen folyamatban dolgoztok, milyen bizonyíték vagy referencia támasztja alá. E-kereskedelemnél a termékhez, mérethez, szállításhoz és garanciához kapcsolódó válaszok legyenek láthatók.');
-    add_issue($issues, ($signals['has_faq_schema'] ?? false) === true && !($signals['faq_schema_fits_context'] ?? false), 'info', 'FAQPage schema van, de nem ez a fő láthatósági eszköz.', 'A Google FAQ rich result 2026. május 7-től nem jelenik meg Searchben, ezért ne általános schema-fixként kezeld. Tartsd meg csak akkor, ha valódi, látható kérdés-válasz tartalmat ír le; B2B oldalon inkább döntéstámogató válaszblokkokat és bizonyítékokat építs.');
-    add_issue($issues, !$signals['has_organization_schema'], 'info', 'Nem látható Organization vagy LocalBusiness séma.', 'Adj szervezeti entitásjelölést névvel, URL-lel, logóval, kapcsolati pontokkal és social profilokkal.');
-    add_issue($issues, !$signals['has_breadcrumb_schema'], 'info', 'Hiányzik a BreadcrumbList séma.', 'A hierarchiát jelöld breadcrumb strukturált adattal, hogy AI rendszerek könnyebben értsék az oldal helyét.');
-    add_issue($issues, !$signals['has_stable_schema_ids'], 'warning', 'Hiányoznak a stabil @id azonosítók a strukturált adatokból.', 'Adj tartós @id URL-eket a fő entitásokhoz, például Organization, WebPage, Article és Person elemekhez.');
-    add_issue($issues, !$signals['has_sameas_identity'], 'info', 'Gyenge külső entitás-összekapcsolás.', 'A márka/szervezet schema elemén használd a sameAs mezőt releváns közösségi, adatbázis vagy szakmai profilokra.');
-    add_issue($issues, !$signals['has_person_or_author_schema'], 'info', 'A szerzői szakértelem nincs strukturált adattal megtámogatva.', 'Szakértői tartalomnál kapjon a szerző Person vagy author jelölést, rövid bio és hitelességi bizonyíték mellett.');
-    add_issue($issues, empty($answerBlocks), 'warning', 'Nem találtunk citációra alkalmas kérdés-válasz blokkot.', 'A fontos H2 szakaszok után adj 40-90 szavas direkt választ, majd részletező magyarázatot és bizonyítékot.');
-    add_issue($issues, !$signals['has_summary_language'], 'warning', 'Nincs jól azonosítható rövid összefoglaló blokk.', 'Tegyél a fő tartalom elejére 3-5 pontos, tényszerű összefoglalót.');
-    add_issue($issues, !$signals['has_author_signal'], 'info', 'Gyenge szerzői vagy felelősségi jel.', 'Tüntesd fel a szerzőt, szakértőt vagy szervezetet, aki a tartalomért felel.');
-    add_issue($issues, !$signals['has_date_signal'], 'info', 'Nem látszik frissítési vagy publikálási dátum.', 'AI keresőknek hasznos a publikálva/frissítve dátum, főleg változó témáknál.');
-    add_issue($issues, !$signals['has_citation_signal'], 'info', 'Kevés forrás- vagy hivatkozási jel.', 'Fontos állításoknál adj forrásokat, referenciákat vagy bizonyítékokat.');
-    add_issue($issues, !$signals['has_open_graph'], 'info', 'Hiányoznak Open Graph meta adatok.', 'Adj og:title, og:description és og:image mezőket a megoszthatóság és entitáskonzisztencia miatt.');
-    add_issue($issues, !$signals['has_canonical'], 'warning', 'Hiányzik a canonical link.', 'Adj canonical URL-t, hogy a duplikált útvonalak ne gyengítsék a jeleket.');
+    add_issue($issues, $shouldAuditIndexMetadata && (($signals['is_b2b_or_service_context'] ?? false) === true || ($signals['is_ecommerce_context'] ?? false) === true) && !($signals['has_contextual_qa_support'] ?? false), 'warning', 'Hiányzik a kontextushoz illő döntéstámogató Q&A tartalom.', 'Indexelésre szánt B2B oldalon ne általános GYIK-et írj: válaszolj a döntéshozói kérdésekre, például kinek való, milyen folyamatban dolgoztok, milyen bizonyíték vagy referencia támasztja alá. E-kereskedelemnél a termékhez, mérethez, szállításhoz és garanciához kapcsolódó válaszok legyenek láthatók.');
+    add_issue($issues, $shouldAuditIndexMetadata && ($signals['has_faq_schema'] ?? false) === true && !($signals['faq_schema_fits_context'] ?? false), 'info', 'FAQPage schema van, de nem ez a fő láthatósági eszköz.', 'A Google FAQ rich result 2026. május 7-től nem jelenik meg Searchben, ezért ne általános schema-fixként kezeld. Tartsd meg csak akkor, ha valódi, látható kérdés-válasz tartalmat ír le; B2B oldalon inkább döntéstámogató válaszblokkokat és bizonyítékokat építs.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_organization_schema'], 'info', 'Nem látható Organization vagy LocalBusiness séma.', 'Indexelésre szánt márka/szolgáltatás oldalon adj szervezeti entitásjelölést névvel, URL-lel, logóval, kapcsolati pontokkal és social profilokkal.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_breadcrumb_schema'], 'info', 'Hiányzik a BreadcrumbList séma.', 'Indexelésre szánt hierarchikus oldalon jelöld breadcrumb strukturált adattal, hogy AI rendszerek könnyebben értsék az oldal helyét.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_stable_schema_ids'], 'warning', 'Hiányoznak a stabil @id azonosítók a strukturált adatokból.', 'Indexelésre szánt oldalon adj tartós @id URL-eket a fő entitásokhoz, például Organization, WebPage, Article és Person elemekhez.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_sameas_identity'], 'info', 'Gyenge külső entitás-összekapcsolás.', 'Indexelésre szánt márka/szervezet schema elemén használd a sameAs mezőt releváns közösségi, adatbázis vagy szakmai profilokra.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_person_or_author_schema'], 'info', 'A szerzői szakértelem nincs strukturált adattal megtámogatva.', 'Indexelésre szánt szakértői tartalomnál kapjon a szerző Person vagy author jelölést, rövid bio és hitelességi bizonyíték mellett.');
+    add_issue($issues, $shouldAuditIndexMetadata && empty($answerBlocks), 'warning', 'Nem találtunk citációra alkalmas kérdés-válasz blokkot.', 'Indexelésre és AI idézhetőségre szánt oldalon a fontos H2 szakaszok után adj 40-90 szavas direkt választ, majd részletező magyarázatot és bizonyítékot.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_summary_language'], 'warning', 'Nincs jól azonosítható rövid összefoglaló blokk.', 'Indexelésre szánt tartalom elejére tegyél 3-5 pontos, tényszerű összefoglalót.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_author_signal'], 'info', 'Gyenge szerzői vagy felelősségi jel.', 'Indexelésre szánt tartalomnál tüntesd fel a szerzőt, szakértőt vagy szervezetet, aki a tartalomért felel.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_date_signal'], 'info', 'Nem látszik frissítési vagy publikálási dátum.', 'Indexelésre szánt, változó témájú tartalomnál hasznos a publikálva/frissítve dátum.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_citation_signal'], 'info', 'Kevés forrás- vagy hivatkozási jel.', 'Indexelésre szánt fontos állításoknál adj forrásokat, referenciákat vagy bizonyítékokat.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_open_graph'], 'info', 'Hiányoznak Open Graph meta adatok.', 'Indexelésre vagy megosztásra szánt oldalon adj og:title, og:description és og:image mezőket a megoszthatóság és entitáskonzisztencia miatt.');
+    add_issue($issues, $shouldAuditIndexMetadata && !$signals['has_canonical'], 'warning', 'Hiányzik a canonical link.', 'Indexelésre szánt oldalon adj canonical URL-t, hogy a duplikált útvonalak ne gyengítsék a jeleket.');
     add_issue($issues, $loadTimeMs > 2500, 'warning', 'Az oldal lassan töltődött be az audit során.', 'Optimalizáld a képeket, cache-t és kritikus CSS/JS betöltést.');
-    add_issue($issues, empty($structuredData), 'warning', 'Nincs JSON-LD strukturált adat.', 'Legalább WebSite, Organization és tartalomtípustól függően Article/Product/Service sémát használj.');
+    add_issue($issues, $shouldAuditIndexMetadata && empty($structuredData), 'warning', 'Nincs JSON-LD strukturált adat.', 'Indexelésre szánt oldalon legalább WebSite, Organization és tartalomtípustól függően Article/Product/Service sémát használj.');
     add_issue($issues, $downloadWarning !== null, 'info', 'A letöltés TLS fallbackkel futott.', 'Éles környezetben állíts be friss CA bundle-t a PHP/cURL számára, hogy az audit teljes TLS ellenőrzéssel működjön.');
-    add_issue($issues, !($entitySignals['has_claim_or_fact_language'] ?? false), 'info', 'Kevés explicit bizonyítéknyelv és adatjel található.', 'A kulcsállításokhoz adj mérési adatot, dátumot, forrást, példát vagy esettanulmányt, hogy az állítás idézhető legyen.');
+    add_issue($issues, $shouldAuditIndexMetadata && !($entitySignals['has_claim_or_fact_language'] ?? false), 'info', 'Kevés explicit bizonyítéknyelv és adatjel található.', 'Indexelésre szánt oldalon a kulcsállításokhoz adj mérési adatot, dátumot, forrást, példát vagy esettanulmányt, hogy az állítás idézhető legyen.');
 
     return $issues;
 }
@@ -1275,7 +1402,11 @@ function page_score(array $issues, array $signals): int
         };
     }
 
-    foreach ($signals as $enabled) {
+    $nonScoringSignals = ['has_noindex', 'likely_intentional_noindex', 'suspicious_noindex', 'should_audit_index_metadata'];
+    foreach ($signals as $key => $enabled) {
+        if (in_array((string) $key, $nonScoringSignals, true)) {
+            continue;
+        }
         if ($enabled === true) {
             $score += 2;
         }
@@ -1390,6 +1521,10 @@ function estimate_seo_score(array $page): int
         return 0;
     }
 
+    if (($page['signals']['likely_intentional_noindex'] ?? false) === true) {
+        return 88;
+    }
+
     $score = 100;
     if (($page['title'] ?? '') === '') {
         $score -= 22;
@@ -1420,6 +1555,10 @@ function estimate_aio_score(array $page): int
 {
     if (!($page['ok'] ?? false)) {
         return 0;
+    }
+
+    if (($page['signals']['likely_intentional_noindex'] ?? false) === true) {
+        return 86;
     }
 
     $signals = $page['signals'] ?? [];
@@ -1453,6 +1592,10 @@ function estimate_aio_score(array $page): int
 
 function estimate_ai_search_visibility_score(array $page): int
 {
+    if (($page['signals']['likely_intentional_noindex'] ?? false) === true) {
+        return 86;
+    }
+
     $signals = $page['signals'] ?? [];
     $score = 0;
 
@@ -1481,6 +1624,10 @@ function estimate_content_score(array $page): int
 {
     if (!($page['ok'] ?? false)) {
         return 0;
+    }
+
+    if (($page['signals']['likely_intentional_noindex'] ?? false) === true) {
+        return 84;
     }
 
     $score = 50;
@@ -1530,6 +1677,10 @@ function estimate_entity_score(array $page): int
         return 0;
     }
 
+    if (($page['signals']['likely_intentional_noindex'] ?? false) === true) {
+        return 84;
+    }
+
     $score = 20;
     $signals = $page['signals'] ?? [];
     $score += (($signals['has_organization_schema'] ?? false) ? 20 : 0);
@@ -1545,6 +1696,10 @@ function estimate_agentic_score(array $page, array $siteFiles): int
 {
     if (!($page['ok'] ?? false)) {
         return 0;
+    }
+
+    if (($page['signals']['likely_intentional_noindex'] ?? false) === true) {
+        return 84;
     }
 
     $score = 45;
@@ -1590,6 +1745,14 @@ function prioritize_recommendations(array $issues): array
 function issue_strategy(string $title, string $level): array
 {
     $lower = text_lower($title);
+
+    if (str_contains($lower, 'noindex')) {
+        return [
+            'category' => 'Indexelési döntés',
+            'why' => 'A noindex nem önmagában hiba: navigációs, szűrő, keresési, paginációs vagy fiók/kosár oldalon gyakran tudatos döntés. Kritikus problémává akkor válik, ha egy organikus/AIO céloldal kerül ki az indexből.',
+            'next_step' => 'Címkézd az oldaltípust: organikus céloldal vagy navigációs/technikai oldal. Csak céloldalnál vedd előre a noindex eltávolítást és a meta/schema javítást; szándékos noindexnél dokumentáld a döntést.',
+        ];
+    }
 
     if (str_contains($lower, 'célja') || str_contains($lower, 'célközönsége')) {
         return [

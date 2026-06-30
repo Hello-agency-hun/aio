@@ -226,7 +226,32 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                         <form class="visibility-project-form" id="visibilityProjectForm" autocomplete="off">
                             <input type="hidden" id="visibilityProjectId" name="id" value="">
 
-                            <div class="form-section form-section-highlight">
+                            <div class="visibility-wizard-tabs" role="tablist" aria-label="AI láthatóságmérés kitöltési lépései">
+                                <button type="button" class="visibility-wizard-tab active" data-visibility-wizard-tab="profile" aria-selected="true">
+                                    <span>1</span>
+                                    <strong>Profil</strong>
+                                    <small>domain, piac, nyelv</small>
+                                </button>
+                                <button type="button" class="visibility-wizard-tab" data-visibility-wizard-tab="topics" aria-selected="false">
+                                    <span>2</span>
+                                    <strong>Témák</strong>
+                                    <small>kérdések, Top 20</small>
+                                </button>
+                                <button type="button" class="visibility-wizard-tab" data-visibility-wizard-tab="competitors" aria-selected="false">
+                                    <span>3</span>
+                                    <strong>Verseny</strong>
+                                    <small>összehasonlítás</small>
+                                </button>
+                                <button type="button" class="visibility-wizard-tab" data-visibility-wizard-tab="run" aria-selected="false">
+                                    <span>4</span>
+                                    <strong>Futtatás</strong>
+                                    <small>mérés, riport</small>
+                                </button>
+                            </div>
+
+                            <p class="visibility-wizard-hint" id="visibilityWizardHint">Kezdd a domainnel és a piaccal. A profil mentése után ugyanazt a mérést később újra tudod futtatni.</p>
+
+                            <div class="form-section form-section-highlight visibility-wizard-panel active" data-wizard-panel="profile">
                                 <div class="form-section-head">
                                     <span>1. lépés</span>
                                     <h3>Mérési profil összeállítása</h3>
@@ -269,7 +294,7 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                                 </div>
                             </div>
 
-                            <div class="form-section">
+                            <div class="form-section visibility-wizard-panel" data-wizard-panel="topics">
                                 <div class="form-section-head">
                                     <span>2. lépés</span>
                                     <h3>Témák és kérdéscsomag</h3>
@@ -278,6 +303,15 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
 
                                 <label for="visibilityTopics">Témák, vevői kérdéskörök</label>
                                 <textarea id="visibilityTopics" name="topics" rows="5" placeholder="AI keresési optimalizálás&#10;weboldal audit&#10;B2B leadgenerálás" required></textarea>
+                                <div class="topic-helper-card" id="topicHelperCard">
+                                    <div>
+                                        <span>AI témasegéd</span>
+                                        <strong>Nem tudod, milyen témákat mérj?</strong>
+                                        <p>A domain, piac és üzleti modell alapján javasolok AI keresésben mérhető vevői témákat. A javaslatokat átnézheted, majd egy kattintással betöltheted.</p>
+                                    </div>
+                                    <button type="button" class="mini-button secondary" id="suggestVisibilityTopicsButton">Témák ajánlása</button>
+                                </div>
+                                <div class="topic-suggestion-panel hidden" id="topicSuggestionPanel" aria-live="polite"></div>
 
                                 <label for="visibilityCustomQueries">Saját mérési kérdések</label>
                                 <textarea id="visibilityCustomQueries" name="custom_queries" rows="4" placeholder="Melyik ügynökség segít AI keresési láthatóságot javítani?&#10;Milyen AIO audit eszközt érdemes használni?"></textarea>
@@ -287,7 +321,7 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                                 <p class="form-help">A Top 20 akkor hasznos, ha hétről hétre ugyanazokat a kérdéseket akarod újramérni. Ha csak egyszeri audit kell, hagyhatod üresen.</p>
                             </div>
 
-                            <div class="form-section">
+                            <div class="form-section visibility-wizard-panel" data-wizard-panel="competitors">
                                 <div class="form-section-head">
                                     <span>3. lépés</span>
                                     <h3>Versenytársak</h3>
@@ -296,47 +330,70 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
 
                                 <label for="visibilityCompetitors">Versenytárs domainek</label>
                                 <textarea id="visibilityCompetitors" name="competitors" rows="4" placeholder="pelda-versenytars.hu&#10;masikceg.hu"></textarea>
+                                <div class="competitor-helper-card" id="competitorHelperCard">
+                                    <div>
+                                        <span>AI versenytárssegéd</span>
+                                        <strong>Nem tudod, kiket mérjünk ellenfélként?</strong>
+                                        <p>A domain, témák és piac alapján keresési/AI jelölteket adok. A lista javaslat, ezért betöltés előtt érdemes ránézni.</p>
+                                    </div>
+                                    <button type="button" class="mini-button secondary" id="suggestVisibilityCompetitorsButton">Versenytársak ajánlása</button>
+                                </div>
+                                <div class="competitor-suggestion-panel hidden" id="competitorSuggestionPanel" aria-live="polite"></div>
                             </div>
 
-                            <div class="visibility-actions">
-                                <div class="visibility-action-stage primary-stage">
-                                    <div class="action-copy">
-                                        <span>Kezdés</span>
-                                        <strong>Profil mentése</strong>
-                                        <small>Ez aktiválja a mérést, az importokat és a későbbi visszatöltést.</small>
-                                    </div>
-                                    <button type="submit" class="mini-button" id="saveVisibilityProjectButton">Profil mentése</button>
+                            <div class="form-section visibility-wizard-panel visibility-run-panel" data-wizard-panel="run">
+                                <div class="form-section-head">
+                                    <span>4. lépés</span>
+                                    <h3>Mentés, ellenőrzés és mérés</h3>
+                                    <p>Először mentsd a profilt. Ezután kérhetsz prompt-előnézetet, majd elindíthatod a tényleges AI láthatóságmérést.</p>
                                 </div>
 
-                                <div class="visibility-action-stage">
-                                    <div class="action-copy">
-                                        <span>Ellenőrzés</span>
-                                        <strong>Kérdések előnézete</strong>
-                                        <small>Nem futtat mérést, csak megmutatja, milyen promptokkal dolgozna a rendszer.</small>
+                                <div class="visibility-actions">
+                                    <div class="visibility-action-stage primary-stage">
+                                        <div class="action-copy">
+                                            <span>Kezdés</span>
+                                            <strong>Profil mentése</strong>
+                                            <small>Ez aktiválja a mérést, az importokat és a későbbi visszatöltést.</small>
+                                        </div>
+                                        <button type="submit" class="mini-button" id="saveVisibilityProjectButton">Profil mentése</button>
                                     </div>
-                                    <div class="button-stack">
-                                        <button type="button" class="mini-button secondary" id="previewVisibilityQueriesButton">Generált kérdések</button>
-                                        <button type="button" class="mini-button secondary" id="previewPortfolioButton">Top 20 előnézet</button>
+
+                                    <div class="visibility-action-stage">
+                                        <div class="action-copy">
+                                            <span>Ellenőrzés</span>
+                                            <strong>Kérdések előnézete</strong>
+                                            <small>Nem futtat mérést, csak megmutatja, milyen promptokkal dolgozna a rendszer.</small>
+                                        </div>
+                                        <div class="button-stack">
+                                            <button type="button" class="mini-button secondary" id="previewVisibilityQueriesButton">Generált kérdések</button>
+                                            <button type="button" class="mini-button secondary" id="previewPortfolioButton">Top 20 előnézet</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="visibility-action-stage run-stage">
+                                        <div class="action-copy">
+                                            <span>Fő funkció</span>
+                                            <strong>Mérés futtatása</strong>
+                                            <small>A saját domaint, a versenytársakat és a citációs mezőt vizsgálja.</small>
+                                        </div>
+                                        <div class="button-stack">
+                                            <button type="button" class="mini-button" id="runVisibilityButton" disabled>Mérés futtatása</button>
+                                            <button type="button" class="mini-button secondary" id="runWeeklyPortfolioButton" disabled>Heti Top 20 futtatása</button>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div class="visibility-action-stage run-stage">
-                                    <div class="action-copy">
-                                        <span>Fő funkció</span>
-                                        <strong>Mérés futtatása</strong>
-                                        <small>A saját domaint, a versenytársakat és a citációs mezőt vizsgálja.</small>
-                                    </div>
-                                    <div class="button-stack">
-                                        <button type="button" class="mini-button" id="runVisibilityButton" disabled>Mérés futtatása</button>
-                                        <button type="button" class="mini-button secondary" id="runWeeklyPortfolioButton" disabled>Heti Top 20 futtatása</button>
-                                    </div>
+                                <div class="visibility-query-preview hidden" id="visibilityQueryPreview"></div>
+                                <div class="visibility-progress hidden" id="visibilityProgressWrap" aria-live="polite">
+                                    <div class="progress-track"><span id="visibilityProgressBar"></span></div>
+                                    <span id="visibilityProgressText">Visibility mérés előkészítése...</span>
                                 </div>
                             </div>
 
-                            <div class="visibility-query-preview hidden" id="visibilityQueryPreview"></div>
-                            <div class="visibility-progress hidden" id="visibilityProgressWrap" aria-live="polite">
-                                <div class="progress-track"><span id="visibilityProgressBar"></span></div>
-                                <span id="visibilityProgressText">Visibility mérés előkészítése...</span>
+                            <div class="visibility-wizard-footer">
+                                <button type="button" class="mini-button secondary" id="visibilityWizardPrev" disabled>Előző lépés</button>
+                                <span id="visibilityWizardLabel">1/4 Mérési profil</span>
+                                <button type="button" class="mini-button" id="visibilityWizardNext">Tovább a témákhoz</button>
                             </div>
                         </form>
 
