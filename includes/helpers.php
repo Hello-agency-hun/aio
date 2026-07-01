@@ -18,7 +18,23 @@ function json_response(array $payload, int $status = 200): never
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     header('X-Content-Type-Options: nosniff');
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    $json = json_encode(
+        $payload,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    if ($json === false) {
+        http_response_code(500);
+        $json = json_encode(
+            [
+                'ok' => false,
+                'message' => 'A szerver nem tudta JSON válasszá alakítani az eredményt.',
+            ],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT
+        ) ?: '{"ok":false,"message":"JSON válaszhiba."}';
+    }
+
+    echo $json;
     exit;
 }
 

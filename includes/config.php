@@ -34,7 +34,7 @@ const REQUEST_TIMEOUT = 12;
 
 // Az OpenAI másodelemzés hosszabb válaszidejét külön kezeljük.
 // Lassú audit vagy terhelt API esetén a 45 másodperc kevés lehet.
-const OPENAI_REQUEST_TIMEOUT = 180;
+const OPENAI_REQUEST_TIMEOUT = 240;
 const OPENAI_CONNECT_TIMEOUT = 20;
 
 // Védelem túl nagy HTML válaszok ellen. Shared hostingon fontos a memóriafegyelem.

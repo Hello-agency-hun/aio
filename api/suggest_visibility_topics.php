@@ -3,8 +3,8 @@
  * AI témasegéd végpont.
  *
  * Mentés előtt is használható: az aktuális űrlapadatokból javasol AI
- * láthatósági mérési témákat. Ha nincs élő AI provider, helyi sablonnal tér
- * vissza, hogy a user journey ne akadjon meg.
+ * láthatósági mérési témákat. Ha nincs élő AI provider vagy olvasható
+ * weboldal-kontekstus, hibát adunk vissza, nem találgatunk sablonból.
  */
 
 declare(strict_types=1);
@@ -12,6 +12,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/visibility_topic_suggestions.php';
+
+if (function_exists('set_time_limit')) {
+    @set_time_limit(max(180, OPENAI_REQUEST_TIMEOUT + 60));
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['ok' => false, 'message' => 'Csak POST kérés engedélyezett.'], 405);

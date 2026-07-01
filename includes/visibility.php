@@ -200,6 +200,12 @@ function visibility_project_from_input(array $input, array $existing = []): arra
 
     $host = visibility_normalize_domain($siteUrl);
     $id = visibility_safe_id((string) ($input['id'] ?? ''));
+    $sourceReportId = visibility_safe_id((string) ($input['source_report_id'] ?? ($existing['source_report_id'] ?? '')));
+    $rawAuditContext = trim((string) ($input['audit_context_json'] ?? ''));
+    $auditContext = $rawAuditContext !== ''
+        ? visibility_sanitize_audit_context($rawAuditContext)
+        : null;
+
     return [
         'id' => $id,
         'name' => trim((string) ($input['name'] ?? '')) ?: $host,
@@ -214,8 +220,57 @@ function visibility_project_from_input(array $input, array $existing = []): arra
         'custom_queries' => $customQueries,
         'query_portfolio' => $queryPortfolio,
         'competitors' => array_slice(array_values(array_unique($competitors)), 0, 12),
+        'source_report_id' => $sourceReportId,
+        'audit_context' => $auditContext,
         'created_at' => $existing['created_at'] ?? date(DATE_ATOM),
         'updated_at' => date(DATE_ATOM),
+    ];
+}
+
+function visibility_sanitize_audit_context(string $rawJson, $fallback = null): ?array
+{
+    $decoded = null;
+    if (trim($rawJson) !== '') {
+        $decoded = json_decode($rawJson, true);
+    }
+
+    if (!is_array($decoded)) {
+        return is_array($fallback) ? $fallback : null;
+    }
+
+    $recommendations = [];
+    foreach (array_slice(is_array($decoded['top_recommendations'] ?? null) ? $decoded['top_recommendations'] : [], 0, 8) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $recommendations[] = [
+            'level' => text_excerpt((string) ($item['level'] ?? ''), 24),
+            'category' => text_excerpt((string) ($item['category'] ?? ''), 80),
+            'title' => text_excerpt((string) ($item['title'] ?? ''), 180),
+            'next_step' => text_excerpt((string) ($item['next_step'] ?? ''), 280),
+            'count' => max(0, (int) ($item['count'] ?? 0)),
+        ];
+    }
+
+    return [
+        'report_id' => visibility_safe_id((string) ($decoded['report_id'] ?? '')),
+        'source_url' => text_excerpt((string) ($decoded['source_url'] ?? ''), 300),
+        'created_at' => text_excerpt((string) ($decoded['created_at'] ?? ''), 64),
+        'overall_score' => max(0, min(100, (int) ($decoded['overall_score'] ?? 0))),
+        'summary_label' => text_excerpt((string) ($decoded['summary_label'] ?? ''), 80),
+        'pages_checked' => max(0, (int) ($decoded['pages_checked'] ?? 0)),
+        'critical_count' => max(0, (int) ($decoded['critical_count'] ?? 0)),
+        'warning_count' => max(0, (int) ($decoded['warning_count'] ?? 0)),
+        'scores' => array_filter([
+            'technical' => isset($decoded['scores']['technical']) ? max(0, min(100, (int) $decoded['scores']['technical'])) : null,
+            'seo' => isset($decoded['scores']['seo']) ? max(0, min(100, (int) $decoded['scores']['seo'])) : null,
+            'aio' => isset($decoded['scores']['aio']) ? max(0, min(100, (int) $decoded['scores']['aio'])) : null,
+            'visibility' => isset($decoded['scores']['visibility']) ? max(0, min(100, (int) $decoded['scores']['visibility'])) : null,
+            'entity' => isset($decoded['scores']['entity']) ? max(0, min(100, (int) $decoded['scores']['entity'])) : null,
+        ], static fn ($value): bool => $value !== null),
+        'static_readiness' => is_array($decoded['static_readiness'] ?? null) ? array_slice($decoded['static_readiness'], 0, 8, true) : [],
+        'top_recommendations' => $recommendations,
     ];
 }
 
@@ -453,6 +508,16 @@ function run_visibility_tracking(array $project, int $queryLimit = 12, ?callable
             'results' => array_slice($items, 0, (int) ($config['max_results'] ?? 8)),
             'error' => $searchResult['message'] ?? '',
         ];
+    }
+
+    $successfulQueries = count(array_filter($queryResults, static function (array $item): bool {
+        return ($item['status'] ?? '') !== 'error' && count($item['results'] ?? []) > 0;
+    }));
+    if ($successfulQueries === 0) {
+        $message = $errors
+            ? 'A visibility keresési provider nem adott használható találatot. Részlet: ' . implode(' | ', array_slice(array_values(array_unique($errors)), 0, 3))
+            : 'A visibility keresési provider nem adott használható találatot. Ellenőrizd a keresési API kulcsot és a provider beállítást.';
+        throw new RuntimeException($message);
     }
 
     arsort($domainCounts);

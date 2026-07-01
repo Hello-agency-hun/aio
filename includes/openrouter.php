@@ -15,6 +15,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/methodology.php';
+require_once __DIR__ . '/ai_report_compactor.php';
 
 function openrouter_config(): array
 {
@@ -22,7 +23,7 @@ function openrouter_config(): array
         'enabled' => getenv('OPENROUTER_ENABLED') !== '0',
         'api_key' => getenv('OPENROUTER_API_KEY') ?: '',
         'model' => getenv('OPENROUTER_MODEL') ?: 'openrouter/free',
-        'timeout' => (int) (getenv('OPENROUTER_TIMEOUT') ?: 120),
+        'timeout' => (int) (getenv('OPENROUTER_TIMEOUT') ?: 240),
         'connect_timeout' => (int) (getenv('OPENROUTER_CONNECT_TIMEOUT') ?: 20),
         'max_tokens' => (int) (getenv('OPENROUTER_MAX_TOKENS') ?: 3500),
         'ca_bundle' => getenv('OPENROUTER_CA_BUNDLE') ?: DATA_DIR . '/cacert.pem',
@@ -73,7 +74,10 @@ function enrich_report_with_openrouter(array $report): array
     $model = (string) ($config['model'] ?: 'openrouter/free');
     $timeout = max(30, (int) ($config['timeout'] ?? 120));
     $connectTimeout = max(5, (int) ($config['connect_timeout'] ?? 20));
-    $maxTokens = max(3500, (int) ($config['max_tokens'] ?? 3500));
+    $maxTokens = max(2800, (int) ($config['max_tokens'] ?? 3500));
+    if (ai_report_is_large($report)) {
+        $maxTokens = min($maxTokens, 3000);
+    }
 
     if (function_exists('set_time_limit')) {
         @set_time_limit($timeout + 30);
@@ -165,11 +169,11 @@ function run_openrouter_online_probe(array $report, array $config, int $connectT
             ],
             [
                 'role' => 'user',
-                'content' => json_encode([
+                'content' => ai_json_encode([
                     'target_domain' => $host,
                     'target_brand' => $brand,
                     'queries' => $queries,
-                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+                ]),
             ],
         ],
         'tools' => [
@@ -226,7 +230,7 @@ function openrouter_chat_request(array $payload, array $config, int $timeout, in
             'HTTP-Referer: ' . (defined('APP_URL') ? APP_URL : 'https://hello-ai-audit.local'),
             'X-Title: Hello AI Audit',
         ],
-        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_POSTFIELDS => ai_json_encode($payload),
     ];
 
     $caBundle = (string) ($config['ca_bundle'] ?? '');
@@ -242,17 +246,11 @@ function openrouter_chat_request(array $payload, array $config, int $timeout, in
     curl_close($ch);
 
     if ($error || $status < 200 || $status >= 300) {
-        $message = $error ?: ('OpenRouter API hiba HTTP ' . $status);
-        $decoded = json_decode($raw, true);
-        if (is_array($decoded) && isset($decoded['error']['message'])) {
-            $message .= ': ' . (string) $decoded['error']['message'];
-        }
-
         return [
             'ok' => false,
             'status' => $status,
             'raw' => $raw,
-            'message' => $message,
+            'message' => ai_provider_error_message('OpenRouter', $status, $raw, $error, $timeout),
         ];
     }
 
@@ -283,28 +281,9 @@ function openrouter_aio_system_prompt(): string
 
 function openrouter_aio_user_prompt(array $report): string
 {
-    $compact = [
-        'url' => $report['url'] ?? '',
-        'overall_score' => $report['overall_score'] ?? 0,
-        'scores' => $report['scores'] ?? [],
-        'summary' => $report['summary'] ?? [],
-        'ai_search_plan' => $report['ai_search_plan'] ?? [],
-        'recommendations' => array_slice($report['recommendations'] ?? [], 0, 12),
-        'pages' => array_map(static function (array $page): array {
-            return [
-                'url' => $page['url'] ?? '',
-                'title' => $page['title'] ?? '',
-                'score' => $page['score'] ?? 0,
-                'word_count' => $page['word_count'] ?? 0,
-                'signals' => $page['signals'] ?? [],
-                'context_signals' => $page['context_signals'] ?? [],
-                'issues' => array_slice($page['issues'] ?? [], 0, 5),
-            ];
-        }, array_slice($report['pages'] ?? [], 0, 8)),
-        'methodology_sources' => array_slice(aio_methodology_sources(), 0, 8),
-    ];
+    $compact = ai_report_compact($report, 'secondary');
 
-    return "Audit riport JSON kivonat:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    return "Audit riport JSON kivonat:\n" . ai_json_encode($compact);
 }
 
 function openrouter_extract_text(array $decoded): string

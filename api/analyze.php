@@ -39,7 +39,7 @@ $crawlOptions['progress_callback'] = $progress;
 
 $resolvedLimit = resolve_crawl_limit($crawlOptions);
 if (function_exists('set_time_limit')) {
-    @set_time_limit((REQUEST_TIMEOUT * $resolvedLimit) + (OPENAI_REQUEST_TIMEOUT * 2) + 360);
+    @set_time_limit((REQUEST_TIMEOUT * $resolvedLimit) + (OPENAI_REQUEST_TIMEOUT * 3) + 480);
 }
 
 try {

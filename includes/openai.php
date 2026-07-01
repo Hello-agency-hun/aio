@@ -19,6 +19,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/methodology.php';
+require_once __DIR__ . '/ai_report_compactor.php';
 
 function openai_config(): array
 {
@@ -69,6 +70,8 @@ function enrich_report_with_openai(array $report, ?callable $progress = null): a
     $maxOutputTokens = max(2200, (int) ($config['max_output_tokens'] ?? 6500));
     if ($isQuickMode) {
         $maxOutputTokens = min($maxOutputTokens, 2200);
+    } elseif (ai_report_is_large($report)) {
+        $maxOutputTokens = min($maxOutputTokens, 4800);
     }
 
     if (function_exists('set_time_limit')) {
@@ -77,7 +80,7 @@ function enrich_report_with_openai(array $report, ?callable $progress = null): a
 
     $payload = [
         'model' => $model,
-        'reasoning' => ['effort' => $isQuickMode ? 'low' : 'high'],
+        'reasoning' => ['effort' => ($isQuickMode || ai_report_is_large($report)) ? 'medium' : 'high'],
         'max_output_tokens' => $maxOutputTokens,
         'instructions' => openai_aio_system_prompt(),
         'input' => openai_aio_user_prompt($report),
@@ -131,7 +134,7 @@ function openai_responses_request(array $payload, array $config, int $timeout, i
             'Authorization: Bearer ' . $config['api_key'],
             'Content-Type: application/json',
         ],
-        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_POSTFIELDS => ai_json_encode($payload),
     ];
 
     $caBundle = (string) ($config['ca_bundle'] ?? '');
@@ -151,7 +154,7 @@ function openai_responses_request(array $payload, array $config, int $timeout, i
             'ok' => false,
             'status' => $status,
             'raw' => $raw,
-            'message' => $error ?: ('OpenAI API hiba HTTP ' . $status),
+            'message' => ai_provider_error_message('OpenAI', $status, $raw, $error, $timeout),
         ];
     }
 
@@ -200,11 +203,11 @@ function run_openai_visibility_probe(array $report, array $config, string $model
             'query_results elemek mezői: id, query, brand_mentioned, domain_cited, position_hint, cited_urls, competitors, answer_summary, risk.',
             'Ha nincs elég adat, jelöld bizonytalannak a risk mezőben, ne találj ki forrást.',
         ]),
-        'input' => json_encode([
+        'input' => ai_json_encode([
             'target_domain' => $host,
             'target_brand' => $brand,
             'queries' => $queries,
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+        ]),
     ];
 
     if ($progress) {
@@ -270,79 +273,14 @@ function openai_aio_system_prompt(): string
 
 function openai_aio_user_prompt(array $report): string
 {
-    $compact = [
-        'url' => $report['url'] ?? '',
-        'overall_score' => $report['overall_score'] ?? 0,
-        'scores' => $report['scores'] ?? [],
-        'summary' => $report['summary'] ?? [],
-        'site_map' => $report['site_map'] ?? [],
-        'ai_search_plan' => $report['ai_search_plan'] ?? [],
-        'saved_search_probe' => openai_compact_saved_search_probe($report['saved_search_probe'] ?? []),
-        'crawl_mode' => $report['crawl_mode'] ?? '',
-        'crawl_limit' => $report['crawl_limit'] ?? 0,
-        'recommendations' => array_slice($report['recommendations'] ?? [], 0, 20),
-        'pages' => array_map(static function (array $page): array {
-            return [
-                'url' => $page['url'] ?? '',
-                'title' => $page['title'] ?? '',
-                'description' => $page['description'] ?? '',
-                'score' => $page['score'] ?? 0,
-                'word_count' => $page['word_count'] ?? 0,
-                'signals' => $page['signals'] ?? [],
-                'raw_html_signals' => $page['raw_html_signals'] ?? [],
-                'ux_signals' => $page['ux_signals'] ?? [],
-                'answer_blocks' => array_slice($page['answer_blocks'] ?? [], 0, 3),
-                'issues' => array_slice($page['issues'] ?? [], 0, 8),
-            ];
-        }, array_slice($report['pages'] ?? [], 0, 14)),
-        'methodology_sources' => aio_methodology_sources(),
-    ];
+    $compact = ai_report_compact($report, 'primary');
 
-    return "Audit riport JSON kivonat:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    return "Audit riport JSON kivonat:\n" . ai_json_encode($compact);
 }
 
 function openai_compact_saved_search_probe(array $probe): array
 {
-    if (!$probe) {
-        return [];
-    }
-
-    return [
-        'status' => $probe['status'] ?? '',
-        'method' => $probe['method'] ?? '',
-        'providers' => $probe['providers'] ?? [],
-        'target_domain' => $probe['target_domain'] ?? '',
-        'retrieval_hit_rate' => $probe['retrieval_hit_rate'] ?? 0,
-        'owned_domain_query_hits' => $probe['owned_domain_query_hits'] ?? 0,
-        'competitors' => array_slice($probe['competitors'] ?? [], 0, 10),
-        'analysis_hint' => $probe['analysis_hint'] ?? '',
-        'query_results' => array_map(static function (array $item): array {
-            return [
-                'id' => $item['id'] ?? '',
-                'type' => $item['type'] ?? '',
-                'query' => $item['query'] ?? '',
-                'provider' => $item['provider'] ?? '',
-                'status' => $item['status'] ?? '',
-                'owned_domain_hit' => $item['owned_domain_hit'] ?? false,
-                'own_results' => array_map(static function (array $result): array {
-                    return [
-                        'title' => $result['title'] ?? '',
-                        'url' => $result['url'] ?? '',
-                        'snippet' => $result['snippet'] ?? '',
-                    ];
-                }, array_slice($item['own_results'] ?? [], 0, 3)),
-                'competitors' => array_slice($item['competitors'] ?? [], 0, 8),
-                'top_results' => array_map(static function (array $result): array {
-                    return [
-                        'title' => $result['title'] ?? '',
-                        'url' => $result['url'] ?? '',
-                        'host' => $result['host'] ?? '',
-                        'snippet' => $result['snippet'] ?? '',
-                    ];
-                }, array_slice($item['results'] ?? [], 0, 5)),
-            ];
-        }, array_slice($probe['query_results'] ?? [], 0, 6)),
-    ];
+    return ai_report_compact_saved_search_probe($probe, 6);
 }
 
 function extract_json_object(string $text): ?array

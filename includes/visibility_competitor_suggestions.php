@@ -3,9 +3,9 @@
  * AI és keresési bizonyíték alapú versenytárssegéd.
  *
  * A modul célja, hogy a felhasználó ne üres textarea előtt találgassa, kiket
- * érdemes benchmarkolni. Ha van keresési provider, konkrét találati domaineket
- * gyűjt. Ha van OpenRouter, AI hipotézist is kér. A visszaadott lista mindig
- * javaslatként jelenik meg, nem végleges piackutatási tényként.
+ * érdemes benchmarkolni. A versenytárslista csak élő AI értelmezés és
+ * weboldal-kontekstus alapján készülhet; ha a provider nem működik, hibát
+ * jelezünk, nem adunk sablonos vagy random fallback listát.
  */
 
 declare(strict_types=1);
@@ -14,6 +14,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/visibility.php';
 require_once __DIR__ . '/visibility_topic_suggestions.php';
 require_once __DIR__ . '/search_providers.php';
+require_once __DIR__ . '/openai.php';
 require_once __DIR__ . '/openrouter.php';
 
 function suggest_visibility_competitors(array $input): array
@@ -38,17 +39,19 @@ function suggest_visibility_competitors(array $input): array
     ];
 
     $context = visibility_topic_homepage_context($siteUrl);
+    visibility_topic_require_context($context);
     $searchEvidence = visibility_competitor_search_evidence($profile);
     $ai = visibility_competitor_ai_suggestions($profile, $context, $searchEvidence);
     $suggestions = visibility_competitor_merge_suggestions($searchEvidence['suggestions'] ?? [], $ai['suggestions'] ?? [], $targetDomain);
 
-    $source = 'fallback';
-    if (($searchEvidence['status'] ?? '') === 'completed' && ($ai['source'] ?? '') === 'openrouter') {
+    $aiSource = (string) ($ai['source'] ?? '');
+    if (!in_array($aiSource, ['openai', 'openrouter'], true) || !$suggestions) {
+        throw new RuntimeException($ai['message'] ?: 'Az AI versenytárssegéd nem adott használható listát. Ellenőrizd az OpenRouter kulcsot/modellt, majd próbáld újra.');
+    }
+
+    $source = $aiSource;
+    if (($searchEvidence['status'] ?? '') === 'completed') {
         $source = 'search_and_ai';
-    } elseif (($searchEvidence['status'] ?? '') === 'completed') {
-        $source = 'search';
-    } elseif (($ai['source'] ?? '') === 'openrouter') {
-        $source = 'openrouter';
     }
 
     $message = visibility_competitor_result_message($source, $searchEvidence, $ai);
@@ -176,45 +179,71 @@ function visibility_competitor_discovery_queries(array $profile): array
 
 function visibility_competitor_ai_suggestions(array $profile, array $context, array $searchEvidence): array
 {
-    $config = openrouter_config();
-    if (($config['enabled'] ?? true) !== true || empty($config['api_key']) || !function_exists('curl_init')) {
-        return [
-            'source' => 'unavailable',
-            'message' => 'OpenRouter nincs beállítva, ezért csak keresési/fallback jelöltek érhetők el.',
-            'suggestions' => [],
-        ];
+    $openAiConfig = openai_config();
+    if (!empty($openAiConfig['api_key']) && function_exists('curl_init')) {
+        return visibility_competitor_openai_suggestions($profile, $context, $searchEvidence, $openAiConfig);
     }
 
+    $config = openrouter_config();
+    if (($config['enabled'] ?? true) !== true || empty($config['api_key']) || !function_exists('curl_init')) {
+        throw new RuntimeException('Az AI versenytárssegédhez OpenAI vagy OpenRouter API kulcs és cURL szükséges. Most nincs működő AI provider, ezért nem készítek találgató versenytárslistát.');
+    }
+
+    return visibility_competitor_openrouter_suggestions($profile, $context, $searchEvidence, $config);
+}
+
+function visibility_competitor_openai_suggestions(array $profile, array $context, array $searchEvidence, array $config): array
+{
+    $model = (string) ($config['model'] ?: 'gpt-5.5');
+    $payload = [
+        'model' => $model,
+        'reasoning' => ['effort' => 'low'],
+        'max_output_tokens' => 2200,
+        'instructions' => visibility_competitor_system_prompt(),
+        'input' => ai_json_encode([
+            'profile' => $profile,
+            'homepage_context' => $context,
+            'search_evidence' => visibility_competitor_compact_search_evidence($searchEvidence),
+        ]),
+    ];
+
+    $timeout = max(45, min(180, (int) ($config['timeout'] ?? OPENAI_REQUEST_TIMEOUT)));
+    $connectTimeout = max(5, (int) ($config['connect_timeout'] ?? OPENAI_CONNECT_TIMEOUT));
+    $apiResult = openai_responses_request($payload, $config, $timeout, $connectTimeout);
+    if (!$apiResult['ok']) {
+        throw new RuntimeException('OpenAI versenytárssegéd hiba: ' . $apiResult['message']);
+    }
+
+    $decoded = json_decode((string) $apiResult['raw'], true);
+    $text = is_array($decoded) ? extract_openai_text($decoded) : '';
+    $json = extract_json_object($text);
+    $suggestions = is_array($json['suggestions'] ?? null)
+        ? visibility_competitor_normalize_suggestions($json['suggestions'], (string) ($profile['target_domain'] ?? ''))
+        : [];
+
+    return [
+        'source' => 'openai',
+        'message' => $suggestions ? 'AI versenytársjavaslat elkészült OpenAI alapon.' : 'Az OpenAI válasz nem tartalmazott használható versenytárslistát.',
+        'suggestions' => $suggestions,
+    ];
+}
+
+function visibility_competitor_openrouter_suggestions(array $profile, array $context, array $searchEvidence, array $config): array
+{
     $payload = [
         'model' => (string) ($config['model'] ?: 'openrouter/free'),
         'messages' => [
             [
                 'role' => 'system',
-                'content' => implode("\n", [
-                    'Magyar nyelvű AI visibility versenytárskutató vagy.',
-                    'Javasolj benchmarkolható versenytárs domaineket a megadott weboldalhoz.',
-                    'Csak olyan domaineket adj, amelyek valószínű piaci vagy tartalmi versenytársak. Ne adj közösségi platformot, magazint vagy katalógust, ha nem direkt versenytárs.',
-                    'Ha keresési evidencia is érkezik, azt használd elsődleges jelként.',
-                    'A javaslat hipotézis: ne állítsd biztos tényként, ha nincs evidencia.',
-                    'Csak JSON objektummal válaszolj. Markdown tilos.',
-                    'JSON forma: {"suggestions":[{"domain":"","name":"","why":"","confidence":"high|medium|low","evidence":["",""]}]}',
-                    'Adj legfeljebb 10 versenytársat.',
-                ]),
+                'content' => visibility_competitor_system_prompt(),
             ],
             [
                 'role' => 'user',
-                'content' => json_encode([
+                'content' => ai_json_encode([
                     'profile' => $profile,
                     'homepage_context' => $context,
-                    'search_evidence' => [
-                        'status' => $searchEvidence['status'] ?? '',
-                        'queries' => $searchEvidence['queries'] ?? [],
-                        'domains' => array_map(static fn (array $item): array => [
-                            'domain' => $item['domain'] ?? '',
-                            'evidence' => $item['evidence'] ?? [],
-                        ], array_slice($searchEvidence['suggestions'] ?? [], 0, 8)),
-                    ],
-                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+                    'search_evidence' => visibility_competitor_compact_search_evidence($searchEvidence),
+                ]),
             ],
         ],
         'temperature' => 0.2,
@@ -226,11 +255,7 @@ function visibility_competitor_ai_suggestions(array $profile, array $context, ar
     $connectTimeout = max(5, (int) ($config['connect_timeout'] ?? 20));
     $apiResult = openrouter_chat_request($payload, $config, $timeout, $connectTimeout);
     if (!$apiResult['ok']) {
-        return [
-            'source' => 'error',
-            'message' => 'OpenRouter versenytárssegéd hiba: ' . $apiResult['message'],
-            'suggestions' => [],
-        ];
+        throw new RuntimeException('OpenRouter versenytárssegéd hiba: ' . $apiResult['message']);
     }
 
     $decoded = json_decode((string) $apiResult['raw'], true);
@@ -244,6 +269,34 @@ function visibility_competitor_ai_suggestions(array $profile, array $context, ar
         'source' => 'openrouter',
         'message' => $suggestions ? 'AI versenytársjavaslat elkészült.' : 'Az AI válasz nem tartalmazott használható versenytárslistát.',
         'suggestions' => $suggestions,
+    ];
+}
+
+function visibility_competitor_system_prompt(): string
+{
+    return implode("\n", [
+        'Magyar nyelvű AI visibility versenytárskutató vagy.',
+        'Javasolj benchmarkolható versenytárs domaineket a megadott weboldalhoz.',
+        'A homepage_context a céloldal publikus szövegéből készült; ezt használd elsődleges üzleti kontextusként.',
+        'Csak olyan domaineket adj, amelyek valószínű piaci vagy tartalmi versenytársak. Ne adj közösségi platformot, magazint vagy katalógust, ha nem direkt versenytárs.',
+        'Ha keresési evidencia is érkezik, azt használd erősítő jelként, de a weboldal profiljához illeszd.',
+        'A javaslat benchmark hipotézis: ne állítsd biztos tényként, ha nincs evidencia.',
+        'Csak JSON objektummal válaszolj. Markdown tilos.',
+        'JSON forma: {"suggestions":[{"domain":"","name":"","why":"","confidence":"high|medium|low","evidence":["",""]}]}',
+        'Adj legfeljebb 10 versenytársat.',
+        'Ha a céloldal kommunikációs, kreatív vagy rendezvényes ügynökség, ilyen típusú hazai piaci szereplőket keress, ne webshopokat.',
+    ]);
+}
+
+function visibility_competitor_compact_search_evidence(array $searchEvidence): array
+{
+    return [
+        'status' => $searchEvidence['status'] ?? '',
+        'queries' => $searchEvidence['queries'] ?? [],
+        'domains' => array_map(static fn (array $item): array => [
+            'domain' => $item['domain'] ?? '',
+            'evidence' => $item['evidence'] ?? [],
+        ], array_slice($searchEvidence['suggestions'] ?? [], 0, 8)),
     ];
 }
 
@@ -333,8 +386,8 @@ function visibility_competitor_result_message(string $source, array $searchEvide
 {
     return match ($source) {
         'search_and_ai' => 'Keresési találatokból és AI értelmezésből állítottam össze a versenytársjelölteket.',
-        'search' => 'Konkrét keresési találatokból állítottam össze a versenytársjelölteket.',
-        'openrouter' => 'AI hipotézisként javasolt versenytársakat adok. Érdemes kézzel ellenőrizni őket.',
-        default => ($searchEvidence['message'] ?? '') . (($ai['message'] ?? '') ? ' ' . $ai['message'] : ''),
+        'openai' => 'A weboldal-kontekstusból és OpenAI értelmezésből készült benchmark-javaslat. Érdemes kézzel ellenőrizni.',
+        'openrouter' => 'A weboldal-kontekstusból és AI értelmezésből készült benchmark-javaslat. Érdemes kézzel ellenőrizni.',
+        default => $ai['message'] ?? 'Az AI versenytárssegéd nem adott használható listát.',
     };
 }

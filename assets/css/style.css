@@ -2154,6 +2154,45 @@ body {
     line-height: 1.45;
 }
 
+.visibility-audit-source-note {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid rgba(255, 0, 168, 0.18);
+    border-radius: 8px;
+    background:
+        linear-gradient(135deg, rgba(255, 0, 168, 0.08), rgba(255, 255, 255, 0.94)),
+        #ffffff;
+}
+
+.visibility-audit-source-note span,
+.visibility-audit-source-note strong,
+.visibility-audit-source-note p {
+    display: block;
+}
+
+.visibility-audit-source-note span {
+    color: var(--accent-strong);
+    font-size: 11px;
+    font-weight: 950;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.visibility-audit-source-note strong {
+    margin-top: 3px;
+    color: var(--text);
+}
+
+.visibility-audit-source-note p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
 .visibility-wizard-panel {
     display: none;
 }
@@ -3741,6 +3780,7 @@ body {
     .visibility-inline-fields,
     .visibility-inline-fields.model-fields,
     .visibility-action-stage,
+    .visibility-audit-source-note,
     .topic-helper-card,
     .topic-suggestion-grid,
     .competitor-helper-card,

@@ -35,6 +35,12 @@ const clearSessionsButton = document.querySelector('#clearSessionsButton');
 const recommendationTemplate = document.querySelector('#recommendationTemplate');
 const visibilityProjectForm = document.querySelector('#visibilityProjectForm');
 const visibilityProjectId = document.querySelector('#visibilityProjectId');
+const visibilitySourceReportId = document.querySelector('#visibilitySourceReportId');
+const visibilityAuditContext = document.querySelector('#visibilityAuditContext');
+const visibilityAuditSourceNote = document.querySelector('#visibilityAuditSourceNote');
+const visibilityAuditSourceTitle = document.querySelector('#visibilityAuditSourceTitle');
+const visibilityAuditSourceText = document.querySelector('#visibilityAuditSourceText');
+const clearVisibilityAuditSourceButton = document.querySelector('#clearVisibilityAuditSourceButton');
 const visibilityUrl = document.querySelector('#visibilityUrl');
 const visibilityStatus = document.querySelector('#visibilityStatus');
 const visibilityDashboard = document.querySelector('#visibilityDashboard');
@@ -300,13 +306,14 @@ exportPdfButton?.addEventListener('click', () => {
 
 historyList?.addEventListener('click', async (event) => {
     const button = event.target.closest('.history-load');
+    const visibilityButton = event.target.closest('.history-visibility');
     const pdfButton = event.target.closest('.history-pdf');
     const deleteButton = event.target.closest('.history-delete');
-    if (!button && !pdfButton && !deleteButton) {
+    if (!button && !visibilityButton && !pdfButton && !deleteButton) {
         return;
     }
 
-    const trigger = button || pdfButton || deleteButton;
+    const trigger = button || visibilityButton || pdfButton || deleteButton;
     const reportId = trigger.dataset.reportId;
     if (!reportId) {
         setStatus('Hiányzó riport azonosító.', 'error');
@@ -318,7 +325,12 @@ historyList?.addEventListener('click', async (event) => {
         return;
     }
 
-    const report = await loadSavedReport(reportId, trigger, { scrollToReport: Boolean(button) });
+    const report = await loadSavedReport(reportId, trigger, { scrollToReport: Boolean(button), render: !visibilityButton });
+    if (visibilityButton && report) {
+        prefillVisibilityProfileFromAuditReport(report);
+        return;
+    }
+
     if (pdfButton && report) {
         openPdfReport(report);
     }
@@ -427,6 +439,11 @@ competitorSuggestionPanel?.addEventListener('click', (event) => {
 
 runWeeklyPortfolioButton?.addEventListener('click', async () => {
     await runVisibilityMeasurement('weekly_portfolio');
+});
+
+clearVisibilityAuditSourceButton?.addEventListener('click', () => {
+    clearVisibilityAuditSource();
+    setVisibilityStatus('Az auditkapcsolat leválasztva. A mezők tartalmát kézzel tovább szerkesztheted.', 'neutral');
 });
 
 exportVisibilityPdfButton?.addEventListener('click', () => {
@@ -907,7 +924,7 @@ async function suggestVisibilityTopics() {
         }
 
         renderTopicSuggestions(payload);
-        setVisibilityStatus(payload.source === 'openrouter' ? 'AI témák elkészültek' : 'Témasablon elkészült', 'success');
+        setVisibilityStatus('AI témák elkészültek a weboldal-kontekstus alapján', 'success');
     } catch (error) {
         if (topicSuggestionPanel) {
             topicSuggestionPanel.classList.remove('hidden');
@@ -932,7 +949,7 @@ function renderTopicSuggestions(payload = {}) {
     topicSuggestionPanel.innerHTML = `
         <div class="topic-suggestion-head">
             <div>
-                <span>${escapeHtml(payload.source === 'openrouter' ? 'AI javaslat' : 'Biztonsági témasablon')}</span>
+                <span>AI javaslat weboldal-kontekstusból</span>
                 <h4>Javasolt mérési témák</h4>
                 <p>${escapeHtml(payload.message || 'Válaszd ki, mely témákat szeretnéd betölteni a mérési profilba.')}</p>
             </div>
@@ -1062,7 +1079,7 @@ function renderCompetitorSuggestions(payload = {}) {
 function renderCompetitorSuggestionCard(item = {}) {
     const domain = String(item.domain || '').trim();
     const confidence = item.confidence === 'high' ? 'Magas' : (item.confidence === 'low' ? 'Alacsony' : 'Közepes');
-    const source = item.source === 'search' ? 'keresési találat' : (item.source === 'search_ai' ? 'keresés + AI' : 'AI hipotézis');
+    const source = item.source === 'search_ai' ? 'keresés + AI' : (item.source === 'search' ? 'keresési evidencia' : 'AI értelmezés');
     const evidence = Array.isArray(item.evidence) ? item.evidence : [];
     const evidenceText = evidence.map((entry) => {
         if (typeof entry === 'string') {
@@ -1094,7 +1111,7 @@ function competitorSuggestionSourceLabel(source) {
         return 'Keresési evidencia';
     }
     if (source === 'openrouter') {
-        return 'AI hipotézis';
+        return 'AI értelmezés';
     }
     return 'Javaslat';
 }
@@ -1123,6 +1140,203 @@ function applySelectedCompetitorSuggestions() {
     setVisibilityStatus(`${selectedDomains.length} versenytársdomaint betöltöttem a mérési profilba`, 'success');
 }
 
+function prefillVisibilityProfileFromAuditReport(report = {}) {
+    if (!visibilityProjectForm) {
+        return;
+    }
+
+    const plan = report.ai_search_plan || {};
+    const normalizedUrl = normalizeAuditUrl(report.summary?.root_url || report.url || '');
+    const domain = normalizeVisibilityDomain(plan.domain || normalizedUrl);
+    const brandName = String(plan.brand_name || domain || 'AI láthatóság').trim();
+    const topics = buildVisibilityTopicsFromAudit(report);
+    const queries = buildVisibilityQueriesFromAudit(report);
+    const portfolio = queries.map((item) => `${item.type || 'audit'}: ${item.query}`).join('\n');
+    const customQueries = queries.slice(0, 8).map((item) => item.query).join('\n');
+
+    currentVisibilityProject = null;
+    currentVisibilityRuns = [];
+    currentVisibilityGa4Imports = [];
+    currentVisibilitySerpAioImports = [];
+    currentVisibilityGeminiGroundingRuns = [];
+
+    if (visibilityProjectId) visibilityProjectId.value = '';
+    if (visibilitySourceReportId) visibilitySourceReportId.value = report.id || '';
+    if (visibilityAuditContext) visibilityAuditContext.value = JSON.stringify(buildVisibilityAuditContext(report));
+    if (document.querySelector('#visibilityName')) document.querySelector('#visibilityName').value = `${brandName} AI láthatóság`;
+    if (visibilityUrl) visibilityUrl.value = normalizedUrl || report.url || '';
+    if (document.querySelector('#visibilityMarket')) document.querySelector('#visibilityMarket').value = inferMarketFromAudit(report);
+    if (document.querySelector('#visibilityLanguage')) document.querySelector('#visibilityLanguage').value = inferLanguageFromAudit(report);
+    if (document.querySelector('#visibilityBusinessModel')) document.querySelector('#visibilityBusinessModel').value = inferBusinessModelFromAudit(report);
+    if (document.querySelector('#visibilityQueryLimit')) document.querySelector('#visibilityQueryLimit').value = String(Math.min(20, Math.max(8, queries.length || 12)));
+    if (document.querySelector('#visibilityTopics')) document.querySelector('#visibilityTopics').value = topics.join('\n');
+    if (document.querySelector('#visibilityCustomQueries')) document.querySelector('#visibilityCustomQueries').value = customQueries;
+    if (document.querySelector('#visibilityQueryPortfolio')) document.querySelector('#visibilityQueryPortfolio').value = portfolio;
+    if (document.querySelector('#visibilityCompetitors')) document.querySelector('#visibilityCompetitors').value = '';
+
+    if (runVisibilityButton) runVisibilityButton.disabled = true;
+    if (runWeeklyPortfolioButton) runWeeklyPortfolioButton.disabled = true;
+    if (exportVisibilityPdfButton) exportVisibilityPdfButton.disabled = true;
+    if (importGa4Button) importGa4Button.disabled = true;
+    if (importSerpAioButton) importSerpAioButton.disabled = true;
+    if (runSerpApiButton) runSerpApiButton.disabled = true;
+    if (runGeminiGroundedButton) runGeminiGroundedButton.disabled = true;
+
+    renderVisibilityAuditSourceNote(buildVisibilityAuditContext(report));
+    renderVisibilityDashboard(null, { target_domain: domain, name: `${brandName} AI láthatóság` }, false, []);
+    updateVisibilityJourneyState();
+    switchAppView('visibility', true);
+    setVisibilityWizardStep('profile', true);
+    setVisibilityStatus('Az auditból előtöltöttem a visibility profilt. Nézd át, majd mentsd a mérést.', 'success');
+}
+
+function buildVisibilityTopicsFromAudit(report = {}) {
+    const plan = report.ai_search_plan || {};
+    const plannedTopics = Array.isArray(plan.main_topics) ? plan.main_topics : [];
+    const recommendationTopics = (report.recommendations || [])
+        .map((item) => item.category || item.title || '')
+        .filter((item) => item && !/finomhangolás|alapjavítás/i.test(item));
+
+    return uniqueCleanList([...plannedTopics, ...recommendationTopics], 12);
+}
+
+function buildVisibilityQueriesFromAudit(report = {}) {
+    const plannedQueries = Array.isArray(report.ai_search_plan?.query_set)
+        ? report.ai_search_plan.query_set
+        : [];
+    const mapped = plannedQueries
+        .map((item) => ({
+            type: item.type || item.id || 'audit',
+            query: String(item.query || '').trim(),
+        }))
+        .filter((item) => item.query !== '');
+
+    if (mapped.length >= 4) {
+        return mapped.slice(0, 20);
+    }
+
+    const domain = normalizeVisibilityDomain(report.url || '');
+    const fallbackQueries = [
+        `Mit tudsz a(z) ${domain} weboldalról és milyen szolgáltatáshoz kötnéd?`,
+        `Milyen források alapján döntenél ${domain} témájában?`,
+        `Mely cégeket ajánlanád ${domain} alternatívájaként?`,
+        `Milyen hibák miatt nem idézné egy AI kereső a ${domain} oldalt?`,
+    ].map((query) => ({ type: 'audit', query }));
+
+    return [...mapped, ...fallbackQueries].slice(0, 20);
+}
+
+function buildVisibilityAuditContext(report = {}) {
+    const summary = report.summary || {};
+    return {
+        report_id: report.id || '',
+        source_url: report.url || summary.root_url || '',
+        created_at: report.created_at || '',
+        overall_score: Number(report.overall_score || 0),
+        summary_label: summary.label || '',
+        pages_checked: Number(summary.pages_checked || 0),
+        critical_count: Number(summary.critical_count || 0),
+        warning_count: Number(summary.warning_count || 0),
+        scores: report.scores || {},
+        static_readiness: report.ai_search_plan?.static_readiness || {},
+        top_recommendations: (report.recommendations || []).slice(0, 8).map((item) => ({
+            level: item.level || '',
+            category: item.category || '',
+            title: item.title || '',
+            next_step: item.next_step || item.fix || '',
+            count: Number(item.count || 0),
+        })),
+    };
+}
+
+function renderVisibilityAuditSourceNote(context = null) {
+    if (!visibilityAuditSourceNote) {
+        return;
+    }
+
+    if (!context?.report_id) {
+        visibilityAuditSourceNote.classList.add('hidden');
+        return;
+    }
+
+    visibilityAuditSourceNote.classList.remove('hidden');
+    if (visibilityAuditSourceTitle) {
+        visibilityAuditSourceTitle.textContent = `Forrásaudit: ${context.overall_score || 0}/100 · ${context.summary_label || 'audit riport'}`;
+    }
+    if (visibilityAuditSourceText) {
+        visibilityAuditSourceText.textContent = `${context.pages_checked || 0} oldal vizsgálata, ${context.critical_count || 0} kritikus és ${context.warning_count || 0} fontos teendő alapján előtöltve.`;
+    }
+}
+
+function clearVisibilityAuditSource() {
+    if (visibilitySourceReportId) visibilitySourceReportId.value = '';
+    if (visibilityAuditContext) visibilityAuditContext.value = '';
+    renderVisibilityAuditSourceNote(null);
+}
+
+function normalizeVisibilityDomain(value = '') {
+    const normalized = normalizeAuditUrl(value);
+    try {
+        const parsed = new URL(normalized || `https://${String(value || '').trim()}`);
+        return parsed.hostname.replace(/^www\./i, '');
+    } catch (error) {
+        return String(value || '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0];
+    }
+}
+
+function uniqueCleanList(items = [], limit = 12) {
+    const seen = new Set();
+    const cleaned = [];
+    items.forEach((item) => {
+        const value = String(item || '').trim();
+        const key = value.toLocaleLowerCase('hu-HU');
+        if (value === '' || seen.has(key)) {
+            return;
+        }
+        seen.add(key);
+        cleaned.push(value);
+    });
+    return cleaned.slice(0, limit);
+}
+
+function inferBusinessModelFromAudit(report = {}) {
+    const text = [
+        report.ai_search_plan?.market_context,
+        report.url,
+        ...(report.ai_search_plan?.main_topics || []),
+    ].join(' ').toLocaleLowerCase('hu-HU');
+
+    if (/e-?commerce|webshop|termék|product/.test(text)) return 'ecommerce';
+    if (/saas|szoftver|software|platform/.test(text)) return 'saas';
+    if (/helyi|local|város|étterem|rendelő/.test(text)) return 'local_service';
+    if (/szakértő|tanácsad|coach|consultant/.test(text)) return 'expert_brand';
+    if (/b2b|ügynökség|agency|szolgáltat/.test(text)) return 'b2b_service';
+    return 'generic';
+}
+
+function inferLanguageFromAudit(report = {}) {
+    const countryHint = String(report.ai_search_plan?.country_hint || '').toLocaleLowerCase('hu-HU');
+    if (countryHint.includes('magyar') || countryHint === 'hu') {
+        return 'hu';
+    }
+    if (countryHint.includes('angol') || countryHint === 'en') {
+        return 'en';
+    }
+    return 'hu';
+}
+
+function inferMarketFromAudit(report = {}) {
+    const countryHint = String(report.ai_search_plan?.country_hint || '').trim();
+    const normalized = countryHint.toLocaleLowerCase('hu-HU');
+    if (normalized.includes('magyar') || normalized === 'hu') {
+        return 'Magyarország';
+    }
+    if (normalized.includes('english') || normalized.includes('angol') || normalized === 'en') {
+        return 'United States';
+    }
+    return countryHint || 'Magyarország';
+}
+
 function loadVisibilityProject(project) {
     currentVisibilityProject = project;
     currentVisibilityRuns = project.latest_run ? [project.latest_run] : [];
@@ -1130,6 +1344,8 @@ function loadVisibilityProject(project) {
     currentVisibilitySerpAioImports = project.latest_serp_aio_import ? [project.latest_serp_aio_import] : currentVisibilitySerpAioImports.filter((item) => item.project_id === project.id);
     currentVisibilityGeminiGroundingRuns = project.latest_gemini_grounding_run ? [project.latest_gemini_grounding_run] : currentVisibilityGeminiGroundingRuns.filter((item) => item.project_id === project.id);
     if (visibilityProjectId) visibilityProjectId.value = project.id || '';
+    if (visibilitySourceReportId) visibilitySourceReportId.value = project.source_report_id || project.audit_context?.report_id || '';
+    if (visibilityAuditContext) visibilityAuditContext.value = project.audit_context ? JSON.stringify(project.audit_context) : '';
     if (document.querySelector('#visibilityName')) document.querySelector('#visibilityName').value = project.name || '';
     if (visibilityUrl) visibilityUrl.value = project.site_url || '';
     if (document.querySelector('#visibilityMarket')) document.querySelector('#visibilityMarket').value = project.market || 'Magyarország';
@@ -1151,6 +1367,7 @@ function loadVisibilityProject(project) {
     renderVisibilityDashboard(project.latest_run || null, project, false, currentVisibilityRuns);
     renderGa4ImportResult(currentVisibilityGa4Imports);
     renderSerpAioImportResult(currentVisibilitySerpAioImports);
+    renderVisibilityAuditSourceNote(project.audit_context || null);
     updateVisibilityJourneyState();
     setVisibilityWizardStep('run', true);
 }
@@ -2369,6 +2586,7 @@ function upsertVisibilityProjectCard(project) {
     visibilityProjectList.querySelector('.empty-state')?.remove();
     const serialized = escapeHtml(JSON.stringify(project));
     const score = project.latest_run ? `${Number(project.latest_run.visibility_rate || 0)}%` : '';
+    const sourceLabel = project.source_report_id ? ' · auditból' : '';
     const existing = Array.from(visibilityProjectList.querySelectorAll('.visibility-project-card'))
         .find((card) => {
             try {
@@ -2380,7 +2598,7 @@ function upsertVisibilityProjectCard(project) {
     const html = `
         <div>
             <strong>${escapeHtml(project.name || project.target_domain || '')}</strong>
-            <small>${escapeHtml(project.target_domain || '')} · ${escapeHtml(project.business_model_label || 'Általános weboldal')} · ${(project.topics || []).length} téma · ${(project.query_portfolio || []).length} Top 20 kérdés</small>
+            <small>${escapeHtml(project.target_domain || '')} · ${escapeHtml(project.business_model_label || 'Általános weboldal')}${sourceLabel} · ${(project.topics || []).length} téma · ${(project.query_portfolio || []).length} Top 20 kérdés</small>
         </div>
         <div class="history-actions">
             ${score ? `<span>${score}</span>` : ''}
@@ -2448,8 +2666,10 @@ async function loadSavedReport(reportId, triggerButton, options = {}) {
             throw new Error(payload.message || 'A riport nem tölthető be.');
         }
 
-        renderReport(payload.report);
-        setStatus('Korábbi riport betöltve', 'success');
+        if (options.render !== false) {
+            renderReport(payload.report);
+            setStatus('Korábbi riport betöltve', 'success');
+        }
         if (options.scrollToReport) {
             switchAppView('audit', true);
             results?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3565,6 +3785,7 @@ function prependHistory(report) {
         <div class="history-actions">
             <span>${Number(report.overall_score || 0)}/100</span>
             <button class="mini-button secondary history-load" type="button" data-report-id="${escapeHtml(report.id || '')}">Megnyitás</button>
+            <button class="mini-button secondary history-visibility" type="button" data-report-id="${escapeHtml(report.id || '')}">Visibility profil</button>
             <button class="mini-button secondary history-pdf" type="button" data-report-id="${escapeHtml(report.id || '')}">PDF</button>
             <a class="mini-button secondary" href="api/download_report.php?id=${encodeURIComponent(report.id || '')}">JSON letöltés</a>
             <button class="mini-button danger history-delete" type="button" data-report-id="${escapeHtml(report.id || '')}">Törlés</button>

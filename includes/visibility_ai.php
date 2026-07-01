@@ -26,6 +26,17 @@ function enrich_visibility_run_with_ai(array $project, array $run, ?callable $pr
         return $openAiResult;
     }
 
+    if (!visibility_ai_allow_fallback()) {
+        return [
+            'enabled' => true,
+            'status' => ($openAiResult['status'] ?? '') === 'skipped' ? 'skipped' : 'error',
+            'provider' => 'openai',
+            'model' => $openAiResult['model'] ?? null,
+            'generated_at' => date(DATE_ATOM),
+            'message' => 'Az OpenAI stratégiai elemzés nem készült el, ezért nem készítek más providerrel találgató fallback választ. Részlet: ' . (string) ($openAiResult['message'] ?? 'ismeretlen OpenAI hiba'),
+        ];
+    }
+
     if ($progress) {
         $progress(86, 'Gemini kontroll', 'Google/Gemini szemléletű stratégiai értelmezés készül.');
     }
@@ -57,6 +68,11 @@ function enrich_visibility_run_with_ai(array $project, array $run, ?callable $pr
         'generated_at' => date(DATE_ATOM),
         'message' => trim(($openAiResult['message'] ?? '') . ' ' . ($geminiResult['message'] ?? '') . ' ' . ($openRouterResult['message'] ?? '')) ?: 'Nincs elérhető AI kulcs a stratégiai értelmezéshez.',
     ];
+}
+
+function visibility_ai_allow_fallback(): bool
+{
+    return getenv('VISIBILITY_AI_ALLOW_FALLBACK') === '1';
 }
 
 function visibility_ai_openai(array $project, array $run): array
@@ -259,5 +275,5 @@ function visibility_ai_user_prompt(array $project, array $run): string
         }, array_slice($run['query_results'] ?? [], 0, 12)),
     ];
 
-    return "AI láthatóságmérési JSON kivonat:\n" . json_encode($compactRun, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    return "AI láthatóságmérési JSON kivonat:\n" . ai_json_encode($compactRun);
 }

@@ -225,6 +225,8 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                     <div class="visibility-left-stack">
                         <form class="visibility-project-form" id="visibilityProjectForm" autocomplete="off">
                             <input type="hidden" id="visibilityProjectId" name="id" value="">
+                            <input type="hidden" id="visibilitySourceReportId" name="source_report_id" value="">
+                            <input type="hidden" id="visibilityAuditContext" name="audit_context_json" value="">
 
                             <div class="visibility-wizard-tabs" role="tablist" aria-label="AI láthatóságmérés kitöltési lépései">
                                 <button type="button" class="visibility-wizard-tab active" data-visibility-wizard-tab="profile" aria-selected="true">
@@ -250,6 +252,14 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                             </div>
 
                             <p class="visibility-wizard-hint" id="visibilityWizardHint">Kezdd a domainnel és a piaccal. A profil mentése után ugyanazt a mérést később újra tudod futtatni.</p>
+                            <div class="visibility-audit-source-note hidden" id="visibilityAuditSourceNote">
+                                <div>
+                                    <span>Auditból előtöltve</span>
+                                    <strong id="visibilityAuditSourceTitle">A profil egy korábbi AIO audit alapján készült.</strong>
+                                    <p id="visibilityAuditSourceText">A mentés után a visibility projekt megőrzi az audit pontszámait és fő javítási fókuszait.</p>
+                                </div>
+                                <button type="button" class="mini-button secondary" id="clearVisibilityAuditSourceButton">Leválasztás</button>
+                            </div>
 
                             <div class="form-section form-section-highlight visibility-wizard-panel active" data-wizard-panel="profile">
                                 <div class="form-section-head">
@@ -410,7 +420,7 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                                 <article class="visibility-project-card" data-project='<?= e(json_encode($project, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)) ?>'>
                                     <div>
                                         <strong><?= e((string) ($project['name'] ?? $project['target_domain'])) ?></strong>
-                                        <small><?= e((string) ($project['target_domain'] ?? '')) ?> · <?= e((string) ($project['business_model_label'] ?? 'Általános weboldal')) ?> · <?= e((string) count($project['topics'] ?? [])) ?> téma · <?= e((string) count($project['query_portfolio'] ?? [])) ?> Top 20 kérdés</small>
+                                        <small><?= e((string) ($project['target_domain'] ?? '')) ?> · <?= e((string) ($project['business_model_label'] ?? 'Általános weboldal')) ?><?= !empty($project['source_report_id']) ? ' · auditból' : '' ?> · <?= e((string) count($project['topics'] ?? [])) ?> téma · <?= e((string) count($project['query_portfolio'] ?? [])) ?> Top 20 kérdés</small>
                                     </div>
                                     <div class="history-actions">
                                         <?php if ($latestRun): ?>
@@ -549,6 +559,7 @@ $visibilityProjects = $isAuthenticated ? list_visibility_projects(8) : [];
                             <div class="history-actions">
                                 <span><?= e((string) $report['overall_score']) ?>/100</span>
                                 <button class="mini-button secondary history-load" type="button" data-report-id="<?= e((string) $report['id']) ?>">Megnyitás</button>
+                                <button class="mini-button secondary history-visibility" type="button" data-report-id="<?= e((string) $report['id']) ?>">Visibility profil</button>
                                 <button class="mini-button secondary history-pdf" type="button" data-report-id="<?= e((string) $report['id']) ?>">PDF</button>
                                 <a class="mini-button secondary" href="api/download_report.php?id=<?= e(rawurlencode((string) $report['id'])) ?>">JSON letöltés</a>
                                 <button class="mini-button danger history-delete" type="button" data-report-id="<?= e((string) $report['id']) ?>">Törlés</button>

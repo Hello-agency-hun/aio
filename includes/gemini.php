@@ -12,6 +12,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/methodology.php';
+require_once __DIR__ . '/ai_report_compactor.php';
 
 function gemini_config(): array
 {
@@ -19,7 +20,7 @@ function gemini_config(): array
         'enabled' => getenv('GEMINI_ENABLED') !== '0',
         'api_key' => getenv('GEMINI_API_KEY') ?: '',
         'model' => getenv('GEMINI_MODEL') ?: 'gemini-flash-latest',
-        'timeout' => (int) (getenv('GEMINI_TIMEOUT') ?: 150),
+        'timeout' => (int) (getenv('GEMINI_TIMEOUT') ?: 240),
         'connect_timeout' => (int) (getenv('GEMINI_CONNECT_TIMEOUT') ?: 20),
         'max_output_tokens' => (int) (getenv('GEMINI_MAX_OUTPUT_TOKENS') ?: 6000),
         'grounded_timeout' => (int) (getenv('GEMINI_GROUNDED_TIMEOUT') ?: 150),
@@ -72,6 +73,9 @@ function enrich_report_with_gemini(array $report): array
     $timeout = max(45, (int) ($config['timeout'] ?? 150));
     $connectTimeout = max(5, (int) ($config['connect_timeout'] ?? 20));
     $maxOutputTokens = max(2200, (int) ($config['max_output_tokens'] ?? 6000));
+    if (ai_report_is_large($report)) {
+        $maxOutputTokens = min($maxOutputTokens, 3600);
+    }
 
     if (function_exists('set_time_limit')) {
         @set_time_limit($timeout + 30);
@@ -209,7 +213,7 @@ function gemini_generate_content_request(array $payload, array $config, int $tim
             'Content-Type: application/json',
             'X-goog-api-key: ' . $config['api_key'],
         ],
-        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_POSTFIELDS => ai_json_encode($payload),
     ];
 
     $caBundle = (string) ($config['ca_bundle'] ?? '');
@@ -225,17 +229,11 @@ function gemini_generate_content_request(array $payload, array $config, int $tim
     curl_close($ch);
 
     if ($error || $status < 200 || $status >= 300) {
-        $message = $error ?: ('Gemini API hiba HTTP ' . $status);
-        $decoded = json_decode($raw, true);
-        if (is_array($decoded) && isset($decoded['error']['message'])) {
-            $message .= ': ' . (string) $decoded['error']['message'];
-        }
-
         return [
             'ok' => false,
             'status' => $status,
             'raw' => $raw,
-            'message' => $message,
+            'message' => ai_provider_error_message('Gemini', $status, $raw, $error, $timeout),
         ];
     }
 
@@ -267,29 +265,9 @@ function gemini_aio_system_prompt(): string
 
 function gemini_aio_user_prompt(array $report): string
 {
-    $compact = [
-        'url' => $report['url'] ?? '',
-        'overall_score' => $report['overall_score'] ?? 0,
-        'scores' => $report['scores'] ?? [],
-        'summary' => $report['summary'] ?? [],
-        'ai_search_plan' => $report['ai_search_plan'] ?? [],
-        'saved_search_probe' => $report['saved_search_probe'] ?? [],
-        'recommendations' => array_slice($report['recommendations'] ?? [], 0, 12),
-        'pages' => array_map(static function (array $page): array {
-            return [
-                'url' => $page['url'] ?? '',
-                'title' => $page['title'] ?? '',
-                'score' => $page['score'] ?? 0,
-                'word_count' => $page['word_count'] ?? 0,
-                'signals' => $page['signals'] ?? [],
-                'context_signals' => $page['context_signals'] ?? [],
-                'issues' => array_slice($page['issues'] ?? [], 0, 5),
-            ];
-        }, array_slice($report['pages'] ?? [], 0, 8)),
-        'methodology_sources' => array_slice(aio_methodology_sources(), 0, 8),
-    ];
+    $compact = ai_report_compact($report, 'secondary');
 
-    return "Audit riport JSON kivonat:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    return "Audit riport JSON kivonat:\n" . ai_json_encode($compact);
 }
 
 function gemini_visibility_system_prompt(): string
@@ -316,10 +294,10 @@ function gemini_visibility_user_prompt(array $project, array $run): string
         return visibility_ai_user_prompt($project, $run);
     }
 
-    return "AI láthatóságmérési JSON kivonat:\n" . json_encode([
+    return "AI láthatóságmérési JSON kivonat:\n" . ai_json_encode([
         'project' => $project,
         'run' => $run,
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    ]);
 }
 
 function gemini_extract_text(array $decoded): string
